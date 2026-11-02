@@ -60,6 +60,7 @@ export function listingFormToRow(form: ListingForm): Mapped<ListingInsert, keyof
 
 export type SnapshotForm = {
   title: string
+  overview: string
   duration: string
   languages: string
   group_type: string
@@ -76,6 +77,7 @@ export type SnapshotForm = {
 
 export const emptySnapshotForm = (): SnapshotForm => ({
   title: '',
+  overview: '',
   duration: '',
   languages: '',
   group_type: '',
@@ -91,6 +93,22 @@ export const emptySnapshotForm = (): SnapshotForm => ({
 })
 
 export type SnapshotField = keyof SnapshotForm | 'listing_id'
+
+export type CaptureStatus = 'complete' | 'partial'
+
+/** Text fields that must all be found for a capture to count as complete. */
+export const CORE_FIELDS = ['title', 'duration', 'languages', 'rating', 'review_count'] as const
+
+/**
+ * complete = title, duration, languages, rating and review count are all filled in,
+ * and at least one option has a price. Anything less is partial.
+ */
+export function computeStatus(form: SnapshotForm): CaptureStatus {
+  const textOk = CORE_FIELDS.every((k) => form[k].trim() !== '')
+  const options = parseOptions(form.options)
+  const pricedOption = options.ok && options.value.some((o) => o.price !== null)
+  return textOk && pricedOption ? 'complete' : 'partial'
+}
 
 export function snapshotFormToRow(
   listingId: string,
@@ -115,8 +133,9 @@ export function snapshotFormToRow(
     row: {
       listing_id: listingId,
       method: 'manual',
-      status: 'complete',
+      status: computeStatus(form),
       title: textOrNull(form.title),
+      overview: textOrNull(form.overview),
       duration: textOrNull(form.duration),
       languages: commaListToArray(form.languages),
       group_type: textOrNull(form.group_type),

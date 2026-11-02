@@ -81,6 +81,7 @@ describe('listingFormToRow', () => {
 describe('snapshotFormToRow', () => {
   const full: SnapshotForm = {
     title: ' Red Dunes Safari ',
+    overview: '  First paragraph.\nSecond paragraph.  ',
     duration: '6 hours',
     languages: 'English, Arabic',
     group_type: 'Shared',
@@ -95,7 +96,7 @@ describe('snapshotFormToRow', () => {
     urgency_text: 'Likely to sell out',
   }
 
-  it('maps a full form to a mt_snapshots row with method manual and status complete', () => {
+  it('maps a full form to a mt_snapshots row with method manual and a computed status of complete', () => {
     expect(snapshotFormToRow('listing-1', full)).toEqual({
       ok: true,
       row: {
@@ -103,6 +104,7 @@ describe('snapshotFormToRow', () => {
         method: 'manual',
         status: 'complete',
         title: 'Red Dunes Safari',
+        overview: 'First paragraph.\nSecond paragraph.',
         duration: '6 hours',
         languages: ['English', 'Arabic'],
         group_type: 'Shared',
@@ -129,20 +131,21 @@ describe('snapshotFormToRow', () => {
       expect(r.row).not.toHaveProperty('captured_at')
       expect(Object.keys(r.row).sort()).toEqual([
         'duration', 'exclusions', 'group_type', 'highlights', 'inclusions', 'itinerary',
-        'languages', 'listing_id', 'method', 'options', 'rating', 'review_count', 'status',
+        'languages', 'listing_id', 'method', 'options', 'overview', 'rating', 'review_count', 'status',
         'title', 'urgency_text', 'why_this',
       ])
     }
   })
 
-  it('maps an empty form to nulls and empty arrays', () => {
+  it('maps an empty form to nulls and empty arrays, with status partial', () => {
     expect(snapshotFormToRow('listing-1', emptySnapshotForm())).toEqual({
       ok: true,
       row: {
         listing_id: 'listing-1',
         method: 'manual',
-        status: 'complete',
+        status: 'partial',
         title: null,
+        overview: null,
         duration: null,
         languages: [],
         group_type: null,
@@ -157,6 +160,28 @@ describe('snapshotFormToRow', () => {
         urgency_text: null,
       },
     })
+  })
+
+  it('maps overview to the overview column, keeping line breaks inside it', () => {
+    const r = snapshotFormToRow('listing-1', { ...emptySnapshotForm(), overview: '\nPara one.\nPara two.\n' })
+    expect(r.ok && r.row.overview).toBe('Para one.\nPara two.')
+  })
+
+  it('saves a manual form whose options have no prices as partial', () => {
+    const r = snapshotFormToRow('listing-1', { ...full, options: 'Shared | Group car\nPrivate' })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.row.options).toEqual([
+        { name: 'Shared', description: 'Group car', price: null },
+        { name: 'Private', description: null, price: null },
+      ])
+      expect(r.row.status).toBe('partial')
+    }
+  })
+
+  it('saves a manual form as partial when a core field is blank, even with prices', () => {
+    const r = snapshotFormToRow('listing-1', { ...full, duration: '  ' })
+    expect(r.ok && r.row.status).toBe('partial')
   })
 
   it('collects errors for bad options, rating and review count', () => {

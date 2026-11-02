@@ -6,6 +6,8 @@ import ListingsPage from './ListingsPage'
 import NewListingForm from './NewListingForm'
 import SnapshotForm from './SnapshotForm'
 import SnapshotList from './SnapshotList'
+import viator2 from '../../../fixtures/viator-2.html?raw'
+import { parseViatorListing } from './capture/viatorParser'
 
 vi.mock('../../lib/supabase', () => ({ supabase: { from: vi.fn() } }))
 
@@ -90,7 +92,7 @@ describe('NewListingForm', () => {
 })
 
 describe('SnapshotForm', () => {
-  it('saves a manual, complete snapshot with parsed fields', async () => {
+  it('saves a manual snapshot with parsed fields, partial because duration is blank', async () => {
     respond = () => ({ data: { id: 's1' }, error: null })
     const onSaved = vi.fn()
     render(<SnapshotForm listingId="L1" onSaved={onSaved} />)
@@ -112,7 +114,7 @@ describe('SnapshotForm', () => {
     expect(callsOf(q, 'insert')[0][0]).toMatchObject({
       listing_id: 'L1',
       method: 'manual',
-      status: 'complete',
+      status: 'partial',
       title: 'Red Dunes',
       languages: ['English', 'Arabic'],
       highlights: ['Dunes', 'Sunset'],
@@ -121,6 +123,25 @@ describe('SnapshotForm', () => {
       rating: 4.5,
       review_count: 120,
     })
+  })
+
+  it('saves status complete when every core field and a priced option are filled in', async () => {
+    respond = () => ({ data: { id: 's2' }, error: null })
+    const onSaved = vi.fn()
+    render(<SnapshotForm listingId="L1" onSaved={onSaved} />)
+
+    const set = (label: RegExp, value: string) =>
+      fireEvent.change(screen.getByLabelText(label), { target: { value } })
+    set(/^title/i, 'Red Dunes')
+    set(/^duration/i, '6 hours')
+    set(/languages/i, 'English')
+    set(/options/i, 'Shared | Group | 150')
+    set(/^rating/i, '4.5')
+    set(/review count/i, '120')
+    fireEvent.click(screen.getByRole('button', { name: /save snapshot/i }))
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    expect(callsOf(inserts()[0], 'insert')[0][0]).toMatchObject({ method: 'manual', status: 'complete' })
   })
 
   it('shows a parse error for an invalid price and does not insert', async () => {
@@ -132,7 +153,37 @@ describe('SnapshotForm', () => {
   })
 })
 
+const VIATOR2_OVERVIEW = [
+  'Discover the history, beauty, and remarkable rebirth of Notre-Dame Cathedral with an expert local Paris guide on this immersive walking experience through the heart of historic Paris.',
+  'Your experience begins with a comprehensive guided walking tour around the exterior of the newly restored Notre-Dame Cathedral and the historic Île de la Cité.',
+  'Following your guided introduction, you are free to enter Notre-Dame Cathedral independently allowing you to explore the magnificent interior at your own pace and discover its beauty in a peaceful and personal way.',
+  'Unlike a traditional interior guided tour, this experience gives you the freedom to spend as much time as you wish inside the cathedral after receiving all the historical context and recommendations from your guide.',
+  "You'll also explore the enchanting streets of the Île de la Cité, the birthplace of Paris, discovering hidden squares, historic bridges, medieval streets, and many of the city's most iconic landmarks.",
+].join('\n')
+
 describe('SnapshotList', () => {
+  it('shows a snapshot overview from viator-2, one paragraph per line', async () => {
+    const parsed = parseViatorListing(viator2, 'https://www.viator.com/tours/Paris/x/d479-8954P40')
+    respond = () => ({
+      data: [{ id: 'v2', listing_id: 'L1', title: parsed.fields.title, overview: parsed.fields.overview, captured_at: '2026-11-02T10:00:00Z' }],
+      error: null,
+    })
+    render(<SnapshotList listingId="L1" refreshKey={0} />)
+
+    const item = await screen.findByRole('article')
+    const dt = within(item).getByText('Overview', { selector: 'dt' })
+    const dd = dt.nextElementSibling as HTMLElement
+    expect(dd.textContent).toBe(VIATOR2_OVERVIEW)
+    expect(dd.className).toContain('whitespace-pre-line')
+  }, 30_000)
+
+  it('leaves out the overview when a snapshot has none', async () => {
+    respond = () => ({ data: [{ id: 'x', listing_id: 'L1', title: 'No overview', overview: null }], error: null })
+    render(<SnapshotList listingId="L1" refreshKey={0} />)
+    const item = await screen.findByRole('article')
+    expect(within(item).queryByText('Overview', { selector: 'dt' })).toBeNull()
+  })
+
   it('requests snapshots newest first and renders them in that order', async () => {
     respond = () => ({
       data: [

@@ -22,8 +22,9 @@ export type Listing = ListingInsert & {
 export type SnapshotInsert = {
   listing_id: string
   method: 'manual'
-  status: 'complete'
+  status: 'complete' | 'partial'
   title: string | null
+  overview: string | null
   duration: string | null
   languages: string[]
   group_type: string | null

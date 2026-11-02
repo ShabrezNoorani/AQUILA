@@ -62,6 +62,7 @@ export default function SnapshotList({ listingId, refreshKey }: { listingId: str
             </p>
           </header>
           <dl className="grid gap-2 text-sm md:grid-cols-2">
+            <Text label="Overview" value={s.overview} />
             <Text label="Duration" value={s.duration} />
             <Text label="Languages" value={s.languages?.join(', ')} />
             <Text label="Group type" value={s.group_type} />

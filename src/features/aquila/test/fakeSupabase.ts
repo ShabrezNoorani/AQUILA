@@ -4,7 +4,7 @@
 
 export type Call = { method: string; args: unknown[] }
 export type Query = { table: string; calls: Call[] }
-export type Result = { data: unknown; error: { message: string } | null }
+export type Result = { data: unknown; error: { message: string } | null; count?: number | null }
 
 export function createFakeSupabase(respond: (q: Query) => Result = () => ({ data: [], error: null })) {
   const queries: Query[] = []
@@ -13,7 +13,7 @@ export function createFakeSupabase(respond: (q: Query) => Result = () => ({ data
     const query: Query = { table, calls: [] }
     queries.push(query)
     const builder: Record<string, unknown> = {}
-    for (const method of ['select', 'insert', 'update', 'eq', 'order', 'single', 'limit']) {
+    for (const method of ['select', 'insert', 'update', 'delete', 'eq', 'order', 'single', 'limit']) {
       builder[method] = (...args: unknown[]) => {
         query.calls.push({ method, args })
         return builder

@@ -26,6 +26,26 @@ export async function createListing(row: ListingInsert): Promise<Listing> {
   return unwrap<Listing>(await supabase.from(LISTINGS).insert(row).select().single())
 }
 
+/** Deletes one listing. The database removes its snapshots automatically. */
+export async function deleteListing(id: string): Promise<void> {
+  const { data, error } = await supabase.from(LISTINGS).delete().eq('id', id).select('id')
+  if (error) throw new Error(error.message)
+  // Row-level security can turn a delete into a silent no-op, so check something was removed.
+  if (!Array.isArray(data) || data.length === 0) {
+    throw new Error('Nothing was deleted. The listing may already be gone, or you may not have permission.')
+  }
+}
+
+/** Counts a listing's snapshots without downloading them. */
+export async function countSnapshots(listingId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from(SNAPSHOTS)
+    .select('id', { count: 'exact', head: true })
+    .eq('listing_id', listingId)
+  if (error) throw new Error(error.message)
+  return count ?? 0
+}
+
 export async function fetchSnapshots(listingId: string): Promise<Snapshot[]> {
   return unwrap<Snapshot[]>(
     await supabase

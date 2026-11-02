@@ -1,4 +1,5 @@
 import AuthGate from './features/aquila/AuthGate'
+import ImportPage from './features/aquila/capture/ImportPage'
 import ListingDetailPage from './features/aquila/ListingDetailPage'
 import ListingsPage from './features/aquila/ListingsPage'
 import NewListingForm from './features/aquila/NewListingForm'
@@ -11,6 +12,9 @@ function Routes() {
       return <NewListingForm onCreated={(id) => navigate(hrefFor.listing(id))} />
     case 'listing':
       return <ListingDetailPage key={route.id} id={route.id} />
+    case 'import':
+      return <ImportPage key={route.id} listingId={route.id}
+        onSaved={() => navigate(hrefFor.listing(route.id))} />
     default:
       return <ListingsPage />
   }
