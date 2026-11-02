@@ -244,3 +244,23 @@ export async function fetchSnapshotOptions(snapshotId: string): Promise<Snapshot
       .order('sort_order', { ascending: true }),
   ) ?? []
 }
+
+// ---------- saving a snapshot ----------
+
+/**
+ * Saves a snapshot and its options in one call to the mt_save_snapshot database function.
+ * The function writes mt_snapshots and mt_snapshot_options together and rolls both back if
+ * anything fails. Returns the new snapshot id.
+ */
+export async function saveSnapshotRpc(
+  p_snapshot: Record<string, unknown>,
+  p_options: Record<string, unknown>[],
+): Promise<string> {
+  const { data, error } = await supabase.rpc('mt_save_snapshot', { p_snapshot, p_options })
+  if (error) throw new Error(error.message)
+  // Accept a bare id, a row with an id, or a one-row array with an id.
+  const first = Array.isArray(data) ? data[0] : data
+  const id = typeof first === 'string' ? first : (first as { id?: unknown } | null)?.id
+  if (typeof id !== 'string' || !id) throw new Error('The database did not return the new snapshot id.')
+  return id
+}

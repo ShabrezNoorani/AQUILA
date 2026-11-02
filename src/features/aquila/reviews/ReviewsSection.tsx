@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createReview, deleteReview, fetchReviews, updateReview } from '../api'
 import type { Review } from '../types'
-import ConfirmDialog from './ConfirmDialog'
+import { Button, Card, ConfirmDialog, EmptyState, FormError } from '../ui'
 import ReviewForm from './ReviewForm'
 import { newReviewRow, reviewToForm } from './reviewMapping'
 
@@ -33,20 +33,23 @@ export default function ReviewsSection({ listingId }: { listingId: string }) {
 
   return (
     <section aria-label="Reviews" className="space-y-4">
-      <h2 className="text-xl font-semibold">Reviews</h2>
+      <h2 className="text-base font-semibold text-ink">Reviews</h2>
 
-      <ReviewForm idPrefix="new-review" heading="Add review" submitLabel="Add review"
-        onSubmit={async (value) => {
-          await createReview(newReviewRow(listingId, value))
-          reload()
-        }} />
+      <Card>
+        <ReviewForm idPrefix="new-review" heading="Add review" submitLabel="Add review"
+          onSubmit={async (value) => {
+            await createReview(newReviewRow(listingId, value))
+            reload()
+          }} />
+      </Card>
 
-      {error && <p role="alert" className="text-red-400">Could not load reviews: {error}</p>}
-      {!error && !reviews && <p>Loading…</p>}
-      {reviews && reviews.length === 0 && <p className="text-slate-400">No reviews yet.</p>}
+      {error && <FormError>Could not load reviews: {error}</FormError>}
+      {!error && !reviews && <p className="text-sm text-ink-3">Loading…</p>}
+      {reviews && reviews.length === 0 && <EmptyState compact title="No reviews yet." />}
 
       {reviews?.map((r) => (
-        <article key={r.id} aria-label={`Review ${r.star_rating} stars`} className="space-y-2 rounded border border-slate-700 p-4">
+        <article key={r.id} aria-label={`Review ${r.star_rating} stars`}
+          className="space-y-3 rounded-card border border-line bg-surface p-6 shadow-sm shadow-ink/5">
           {editingId === r.id ? (
             <ReviewForm idPrefix={`edit-review-${r.id}`} heading="Edit review" submitLabel="Save review"
               initial={reviewToForm(r)}
@@ -58,11 +61,11 @@ export default function ReviewsSection({ listingId }: { listingId: string }) {
               }} />
           ) : (
             <>
-              <p>
-                <span aria-label={`${r.star_rating} out of 5 stars`} className="text-amber-300">{stars(r.star_rating)}</span>
-                {r.review_date && <span className="ml-2 text-xs text-slate-400">{r.review_date}</span>}
+              <p className="flex items-center gap-2">
+                <span aria-label={`${r.star_rating} out of 5 stars`} className="tracking-wider text-accent">{stars(r.star_rating)}</span>
+                {r.review_date && <span className="text-xs text-ink-3">{r.review_date}</span>}
               </p>
-              <p className="whitespace-pre-line text-sm">{r.review_text}</p>
+              <p className="whitespace-pre-line text-sm leading-relaxed text-ink">{r.review_text}</p>
               {confirmingId === r.id ? (
                 <ConfirmDialog label="Confirm delete review" message="Delete this review? This can’t be undone."
                   confirmLabel="Yes, delete review"
@@ -73,15 +76,9 @@ export default function ReviewsSection({ listingId }: { listingId: string }) {
                     reload()
                   }} />
               ) : (
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => { setConfirmingId(null); setEditingId(r.id) }}
-                    className="rounded border border-slate-500 px-3 py-1 text-sm">
-                    Edit
-                  </button>
-                  <button type="button" onClick={() => { setEditingId(null); setConfirmingId(r.id) }}
-                    className="rounded border border-red-500 px-3 py-1 text-sm text-red-400">
-                    Delete
-                  </button>
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" onClick={() => { setConfirmingId(null); setEditingId(r.id) }}>Edit</Button>
+                  <Button size="sm" variant="danger" onClick={() => { setEditingId(null); setConfirmingId(r.id) }}>Delete</Button>
                 </div>
               )}
             </>

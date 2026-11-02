@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchAllListingTags, fetchListings, fetchTags } from './api'
-import { inputClass } from './fields'
 import { hrefFor } from './router'
 import { filterListings, tagsByListing, tagsOfKind, type ListingFilters } from './tags/tagMapping'
 import { TagChips } from './tags/TagPicker'
 import type { Listing, ListingTag, Tag } from './types'
+import { Badge, Button, ButtonLink, Card, EmptyState, FormError, Page, Table, THead, Td, Th, Tr, inputClass } from './ui'
 
 export default function ListingsPage() {
   const [listings, setListings] = useState<Listing[] | null>(null)
@@ -37,30 +37,32 @@ export default function ListingsPage() {
   const filtering = filters.typeId !== '' || filters.placeId !== ''
 
   return (
-    <section className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Listings</h1>
-        <div className="flex items-center gap-3">
-          <a href={hrefFor.tags()} className="underline">Tags</a>
-          <a href={hrefFor.newListing()} className="rounded bg-white px-3 py-2 font-semibold text-slate-900">
-            New listing
-          </a>
-        </div>
-      </div>
+    <Page title="Listings"
+      actions={(
+        <>
+          <ButtonLink href={hrefFor.tags()} variant="secondary">Tags</ButtonLink>
+          <ButtonLink href={hrefFor.newListing()} variant="primary">New listing</ButtonLink>
+        </>
+      )}>
+      {tagError && <FormError>Could not load tags: {tagError}</FormError>}
+      {error && <FormError>Could not load listings: {error}</FormError>}
+      {!error && !listings && <p className="text-sm text-ink-3">Loading…</p>}
+      {listings && listings.length === 0 && (
+        <EmptyState title="No listings yet." description="Add your own listing or a competitor’s to start tracking it." />
+      )}
 
-      {tagError && <p role="alert" className="text-red-400">Could not load tags: {tagError}</p>}
       {listings && listings.length > 0 && (
-        <div className="flex flex-wrap items-end gap-4">
-          <div className="space-y-1">
-            <label htmlFor="filter-type" className="block text-sm font-medium">Type</label>
+        <Card padded={false} className="flex flex-wrap items-end gap-4 px-6 py-4">
+          <div className="w-48 space-y-1.5">
+            <label htmlFor="filter-type" className="block text-xs font-medium text-ink-3">Type</label>
             <select id="filter-type" value={filters.typeId} className={inputClass}
               onChange={(e) => setFilters((f) => ({ ...f, typeId: e.target.value }))}>
               <option value="">All types</option>
               {tagsOfKind(tags, 'type').map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           </div>
-          <div className="space-y-1">
-            <label htmlFor="filter-place" className="block text-sm font-medium">Place</label>
+          <div className="w-48 space-y-1.5">
+            <label htmlFor="filter-place" className="block text-xs font-medium text-ink-3">Place</label>
             <select id="filter-place" value={filters.placeId} className={inputClass}
               onChange={(e) => setFilters((f) => ({ ...f, placeId: e.target.value }))}>
               <option value="">All places</option>
@@ -68,48 +70,48 @@ export default function ListingsPage() {
             </select>
           </div>
           {filtering && (
-            <button type="button" onClick={() => setFilters({ typeId: '', placeId: '' })}
-              className="rounded border border-slate-500 px-3 py-2 text-sm">
+            <Button variant="ghost" onClick={() => setFilters({ typeId: '', placeId: '' })}>
               Clear filters
-            </button>
+            </Button>
           )}
-        </div>
+          {shown && (
+            <p className="ml-auto self-center text-sm text-ink-3">
+              {shown.length} of {listings.length}
+            </p>
+          )}
+        </Card>
       )}
 
-      {error && <p role="alert" className="text-red-400">Could not load listings: {error}</p>}
-      {!error && !listings && <p>Loading…</p>}
-      {listings && listings.length === 0 && <p className="text-slate-400">No listings yet.</p>}
-
       {shown && listings && listings.length > 0 && shown.length === 0 && (
-        <p className="text-slate-400">No listings match these filters.</p>
+        <EmptyState compact title="No listings match these filters." />
       )}
 
       {shown && shown.length > 0 && (
-        <table className="w-full text-left text-sm">
-          <thead className="text-slate-400">
+        <Table>
+          <THead>
             <tr>
-              <th className="py-2">Name</th>
-              <th>Type</th>
-              <th>Source</th>
-              <th>Status</th>
-              <th>Tags</th>
+              <Th>Name</Th>
+              <Th>Type</Th>
+              <Th>Source</Th>
+              <Th>Status</Th>
+              <Th>Tags</Th>
             </tr>
-          </thead>
+          </THead>
           <tbody>
             {shown.map((l) => (
-              <tr key={l.id} className="border-t border-slate-700">
-                <td className="py-2">
-                  <a href={hrefFor.listing(l.id)} className="underline">{l.name}</a>
-                </td>
-                <td>{l.is_own ? 'Own' : 'Competitor'}</td>
-                <td>{l.source}</td>
-                <td>{l.active ? 'Active' : 'Inactive'}</td>
-                <td><TagChips tags={tagMap.get(l.id) ?? []} /></td>
-              </tr>
+              <Tr key={l.id}>
+                <Td>
+                  <a href={hrefFor.listing(l.id)} className="font-medium text-ink hover:text-accent hover:underline">{l.name}</a>
+                </Td>
+                <Td className="text-ink-3">{l.is_own ? 'Own' : 'Competitor'}</Td>
+                <Td className="text-ink-3">{l.source}</Td>
+                <Td><Badge tone={l.active ? 'positive' : 'neutral'}>{l.active ? 'Active' : 'Inactive'}</Badge></Td>
+                <Td><TagChips tags={tagMap.get(l.id) ?? []} /></Td>
+              </Tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       )}
-    </section>
+    </Page>
   )
 }

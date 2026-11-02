@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react'
-import { TextField } from '../fields'
 import type { SnapshotField, SnapshotForm } from '../mapping'
 import { hrefFor } from '../router'
 import { BOOKMARKLET, parseBookmarkPayload } from './bookmarklet'
 import { saveAssistedSnapshot } from './captureApi'
+import { Badge, Button, Card, FormError, Page, TextField, inputClass } from '../ui'
 import { computeStatus, parseViatorListing, type MissingField, type ParseResult } from './viatorParser'
 
 type FieldDef = { key: keyof SnapshotForm; label: string; multiline?: boolean }
@@ -45,54 +45,57 @@ function BookmarkSection() {
   }
 
   return (
-    <section className="space-y-2 rounded border border-slate-700 p-4">
-      <h2 className="text-xl font-semibold">1. The bookmark</h2>
-      <p className="text-sm text-slate-300">
+    <Card as="section" className="space-y-3">
+      <h2 className="text-base font-semibold text-ink">1. The bookmark</h2>
+      <p className="text-sm text-ink-3">
         Copy this code, create a new bookmark in your browser, and paste the code as its URL. Then open a
         Viator product page, click the bookmark, come back here and paste. The bookmark only copies the page’s
         URL and HTML to your clipboard.
       </p>
-      <label htmlFor="bookmark-code" className="block text-sm font-medium">Bookmark code</label>
+      <label htmlFor="bookmark-code" className="block text-sm font-medium text-ink">Bookmark code</label>
       <div className="flex gap-2">
         <input id="bookmark-code" readOnly value={BOOKMARKLET}
           onFocus={(e) => e.target.select()}
-          className="w-full rounded bg-slate-800 px-3 py-2 font-mono text-xs" />
-        <button type="button" onClick={copy}
-          className="shrink-0 rounded bg-white px-3 py-2 font-semibold text-slate-900">
-          Copy bookmark
-        </button>
+          className={`${inputClass} bg-paper font-mono text-xs`} />
+        <Button variant="primary" className="shrink-0" onClick={copy}>Copy bookmark</Button>
       </div>
-      {copied === 'ok' && <p className="text-sm text-green-400">Copied.</p>}
-      {copied === 'failed' && <p className="text-sm text-red-400">Could not copy. Select the code and copy it by hand.</p>}
-    </section>
+      {copied === 'ok' && <p className="text-sm text-positive-deep">Copied.</p>}
+      {copied === 'failed' && <p className="text-sm text-negative-deep">Could not copy. Select the code and copy it by hand.</p>}
+    </Card>
   )
 }
 
 function Preview({ result, status }: { result: ParseResult; status: string }) {
   return (
-    <section aria-label="Preview" className="space-y-3 rounded border border-slate-700 p-4">
-      <h2 className="text-xl font-semibold">3. Preview</h2>
-      <p className="text-sm break-all text-slate-400">{result.url}</p>
-      <p>Status: <strong>{status}</strong></p>
-      <div>
-        <h3 className="font-semibold">Missing</h3>
+    <Card as="section" aria-label="Preview" className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <h2 className="text-base font-semibold text-ink">3. Preview</h2>
+          <p className="text-xs break-all text-ink-3">{result.url}</p>
+        </div>
+        <p className="flex items-center gap-2 text-sm text-ink-3">
+          Status: <Badge tone={status === 'complete' ? 'positive' : 'neutral'}><strong>{status}</strong></Badge>
+        </p>
+      </div>
+      <div className="rounded-card border border-line bg-paper p-3">
+        <h3 className="text-sm font-semibold text-ink">Missing</h3>
         {result.missing.length === 0 ? (
-          <p className="text-sm text-slate-400">Nothing missing.</p>
+          <p className="mt-1 text-sm text-ink-3">Nothing missing.</p>
         ) : (
-          <ul aria-label="Missing fields" className="list-disc pl-5 text-sm text-amber-300">
+          <ul aria-label="Missing fields" className="mt-1 list-disc pl-5 text-sm text-ink-2">
             {result.missing.map((m) => <li key={m}>{LABELS[m]}</li>)}
           </ul>
         )}
       </div>
-      <dl className="grid gap-2 text-sm md:grid-cols-2">
+      <dl className="grid gap-x-6 gap-y-4 text-sm md:grid-cols-2">
         {FIELDS.map((f) => (
           <div key={f.key}>
-            <dt className="text-slate-400">{LABELS[f.key]}</dt>
-            <dd className="whitespace-pre-line">{result.fields[f.key] || '—'}</dd>
+            <dt className="text-xs font-medium uppercase tracking-wide text-ink-3">{LABELS[f.key]}</dt>
+            <dd className="mt-1 whitespace-pre-line text-ink">{result.fields[f.key] || '—'}</dd>
           </div>
         ))}
       </dl>
-    </section>
+    </Card>
   )
 }
 
@@ -146,46 +149,46 @@ export default function ImportPage({ listingId, onSaved }: { listingId: string; 
   }
 
   return (
-    <section className="space-y-6">
-      <a href={hrefFor.listing(listingId)} className="text-sm underline">← Back to listing</a>
-      <h1 className="text-2xl font-bold">Import from page</h1>
-
+    <Page title="Import from page" back={{ href: hrefFor.listing(listingId), label: '← Back to listing' }}>
       <BookmarkSection />
 
-      <section className="space-y-2 rounded border border-slate-700 p-4">
-        <h2 className="text-xl font-semibold">2. Paste</h2>
+      <Card as="section" className="space-y-3">
+        <h2 className="text-base font-semibold text-ink">2. Paste</h2>
         <TextField id="bookmark-output" label="Bookmark output" value={pasted} onChange={setPasted}
-          multiline rows={4} placeholder='{"url": "https://www.viator.com/…", "html": "…"}' />
-        {parseError && <p role="alert" className="text-red-400">{parseError}</p>}
-        <button type="button" onClick={handleParse}
-          className="rounded bg-white px-3 py-2 font-semibold text-slate-900">
-          Parse
-        </button>
-      </section>
+          multiline rows={4} placeholder='{"url": "https://www.viator.com/…", "html": "…"}'
+          className="font-mono text-xs" />
+        {parseError && <FormError>{parseError}</FormError>}
+        <div className="flex justify-end">
+          <Button variant="primary" onClick={handleParse}>Parse</Button>
+        </div>
+      </Card>
 
       {parsed && form && (
         <>
           <Preview result={parsed.result} status={parsed.result.status} />
 
-          <form onSubmit={handleSave} noValidate className="space-y-4 rounded border border-slate-700 p-4">
-            <h2 className="text-xl font-semibold">4. Check and edit, then save</h2>
-            <p className="text-sm">Will be saved as: <strong>{computeStatus(form)}</strong></p>
-            <div className="grid gap-4 md:grid-cols-2">
+          <form onSubmit={handleSave} noValidate className="space-y-5 rounded-card border border-line bg-surface p-6 shadow-sm shadow-ink/5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-base font-semibold text-ink">4. Check and edit, then save</h2>
+              <p className="text-sm text-ink-3">Will be saved as: <strong className="text-ink">{computeStatus(form)}</strong></p>
+            </div>
+            <div className="grid gap-5 md:grid-cols-2">
               {FIELDS.map((f) => (
                 <TextField key={f.key} id={`import-${f.key}`} label={f.label} value={form[f.key]}
                   multiline={f.multiline} error={errors[f.key]}
                   onChange={(v) => setForm((prev) => (prev ? { ...prev, [f.key]: v } : prev))} />
               ))}
             </div>
-            {errors.listing_id && <p role="alert" className="text-red-400">{errors.listing_id}</p>}
-            {saveError && <p role="alert" className="text-red-400">Could not save: {saveError}</p>}
-            <button type="submit" disabled={busy}
-              className="rounded bg-white px-3 py-2 font-semibold text-slate-900 disabled:opacity-50">
-              {busy ? 'Saving…' : 'Save snapshot'}
-            </button>
+            {errors.listing_id && <FormError>{errors.listing_id}</FormError>}
+            {saveError && <FormError>Could not save: {saveError}</FormError>}
+            <div className="flex justify-end">
+              <Button type="submit" variant="primary" disabled={busy}>
+                {busy ? 'Saving…' : 'Save snapshot'}
+              </Button>
+            </div>
           </form>
         </>
       )}
-    </section>
+    </Page>
   )
 }

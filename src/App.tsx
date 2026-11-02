@@ -4,7 +4,9 @@ import ListingDetailPage from './features/aquila/ListingDetailPage'
 import ListingsPage from './features/aquila/ListingsPage'
 import NewListingForm from './features/aquila/NewListingForm'
 import TagsPage from './features/aquila/tags/TagsPage'
+import AskPage from './features/aquila/ask/AskPage'
 import { hrefFor, navigate, useHashRoute } from './features/aquila/router'
+import { AppShell } from './features/aquila/ui'
 
 function Routes() {
   const route = useHashRoute()
@@ -18,22 +20,29 @@ function Routes() {
         onSaved={() => navigate(hrefFor.listing(route.id))} />
     case 'tags':
       return <TagsPage />
+    case 'ask':
+      return <AskPage />
     default:
       return <ListingsPage />
   }
 }
 
+/** The app frame, with the sidebar item for the current page highlighted. */
+function Layout() {
+  const route = useHashRoute()
+  return (
+    <AppShell active={route.name === 'tags' ? 'tags' : route.name === 'ask' ? 'ask' : 'listings'}>
+      <main>
+        <Routes />
+      </main>
+    </AppShell>
+  )
+}
+
 export default function App() {
   return (
     <AuthGate>
-      <div className="min-h-screen bg-slate-900 text-white">
-        <nav className="border-b border-slate-700 px-6 py-3">
-          <a href={hrefFor.listings()} className="text-lg font-bold">AQUILA</a>
-        </nav>
-        <main className="mx-auto max-w-5xl p-6">
-          <Routes />
-        </main>
-      </div>
+      <Layout />
     </AuthGate>
   )
 }

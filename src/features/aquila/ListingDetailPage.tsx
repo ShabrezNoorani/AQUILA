@@ -9,7 +9,6 @@ import {
   setListingTags,
   updateListing,
 } from './api'
-import { Field, TextField, inputClass } from './fields'
 import { listingFormToRow } from './mapping'
 import ReviewsSection from './reviews/ReviewsSection'
 import { hrefFor, navigate } from './router'
@@ -17,7 +16,22 @@ import SnapshotForm from './SnapshotForm'
 import SnapshotList from './SnapshotList'
 import { listingTagsError } from './tags/tagMapping'
 import TagPicker, { TagChips } from './tags/TagPicker'
-import { LISTING_SOURCES, type Listing, type ListingSource, type Tag } from './types'
+import { LISTING_SOURCES, SOURCE_LABELS, type Listing, type ListingSource, type Tag } from './types'
+import {
+  Badge,
+  Button,
+  ButtonLink,
+  Card,
+  Dialog,
+  Field,
+  FormError,
+  Page,
+  Tabs,
+  TextField,
+  buttonClass,
+  dangerSolidClass,
+  inputClass,
+} from './ui'
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
@@ -62,36 +76,36 @@ function EditListingForm({ listing, onSaved, onCancel }: {
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate aria-label="Edit listing" className="max-w-lg space-y-3 rounded border border-slate-700 p-4">
-      <h2 className="text-xl font-semibold">Edit listing</h2>
-      <TextField id="edit-listing-name" label="Name *" value={form.name}
-        onChange={(v) => set('name', v)} error={errors.name} />
-      <Field id="edit-listing-source" label="Source" error={errors.source}>
-        <select id="edit-listing-source" value={form.source} className={inputClass}
-          onChange={(e) => set('source', e.target.value as ListingSource)}>
-          {LISTING_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-      </Field>
-      <TextField id="edit-listing-url" label="URL" value={form.url}
-        onChange={(v) => set('url', v)} error={errors.url} />
-      <TextField id="edit-listing-competitor-name" label="Competitor name" value={form.competitor_name}
-        onChange={(v) => set('competitor_name', v)} />
-      <label className="flex items-center gap-2">
-        <input type="checkbox" checked={form.active} onChange={(e) => set('active', e.target.checked)} />
-        Active
-      </label>
-      {saveError && <p role="alert" className="text-sm text-red-400">Could not save: {saveError}</p>}
-      <div className="flex gap-2">
-        <button type="submit" disabled={busy}
-          className="rounded bg-white px-3 py-2 text-sm font-semibold text-slate-900 disabled:opacity-50">
-          {busy ? 'Saving…' : 'Save listing'}
-        </button>
-        <button type="button" onClick={onCancel} disabled={busy}
-          className="rounded border border-slate-500 px-3 py-2 text-sm">
-          Cancel
-        </button>
-      </div>
-    </form>
+    <Card title="Edit listing">
+      <form onSubmit={handleSubmit} noValidate aria-label="Edit listing" className="space-y-5">
+        <TextField id="edit-listing-name" label="Name *" value={form.name}
+          onChange={(v) => set('name', v)} error={errors.name} />
+        <div className="grid gap-5 sm:grid-cols-2">
+          <Field id="edit-listing-source" label="Source" error={errors.source}>
+            <select id="edit-listing-source" value={form.source} className={inputClass}
+              onChange={(e) => set('source', e.target.value as ListingSource)}>
+              {LISTING_SOURCES.map((s) => <option key={s} value={s}>{SOURCE_LABELS[s]}</option>)}
+            </select>
+          </Field>
+          <TextField id="edit-listing-competitor-name" label="Competitor name" value={form.competitor_name}
+            onChange={(v) => set('competitor_name', v)} />
+        </div>
+        <TextField id="edit-listing-url" label="URL" value={form.url}
+          onChange={(v) => set('url', v)} error={errors.url} />
+        <label className="flex items-center gap-2 text-sm text-ink">
+          <input type="checkbox" className="h-4 w-4 accent-ink" checked={form.active}
+            onChange={(e) => set('active', e.target.checked)} />
+          Active
+        </label>
+        {saveError && <FormError>Could not save: {saveError}</FormError>}
+        <div className="flex justify-end gap-2">
+          <Button onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button type="submit" variant="primary" disabled={busy}>
+            {busy ? 'Saving…' : 'Save listing'}
+          </Button>
+        </div>
+      </form>
+    </Card>
   )
 }
 
@@ -150,40 +164,28 @@ function ListingTagsSection({ listingId }: { listingId: string }) {
   }
 
   return (
-    <section aria-label="Tags" className="space-y-2">
-      <h2 className="text-xl font-semibold">Tags</h2>
-      {loadError && <p role="alert" className="text-sm text-red-400">Could not load tags: {loadError}</p>}
-      {!loadError && !tags && <p className="text-sm">Loading tags…</p>}
-      {tags && !editing && (
-        <div className="flex flex-wrap items-center gap-3">
-          <TagChips tags={current} />
-          <button type="button" onClick={startEditing}
-            className="rounded border border-slate-500 px-3 py-1 text-sm">
-            Edit tags
-          </button>
-        </div>
-      )}
+    <Card as="section" aria-label="Tags" title="Tags"
+      actions={tags && !editing ? <Button size="sm" onClick={startEditing}>Edit tags</Button> : undefined}>
+      {loadError && <FormError>Could not load tags: {loadError}</FormError>}
+      {!loadError && !tags && <p className="text-sm text-ink-3">Loading tags…</p>}
+      {tags && !editing && <TagChips tags={current} />}
       {tags && editing && (
-        <div className="max-w-lg space-y-3 rounded border border-slate-700 p-4">
+        <div className="space-y-4">
           <TagPicker idPrefix="edit-listing" tags={tags} selected={draft} error={ruleError} disabled={busy}
             onChange={(ids) => {
               setDraft(ids)
               setRuleError(null)
             }} />
-          {saveError && <p role="alert" className="text-sm text-red-400">Could not save tags: {saveError}</p>}
-          <div className="flex gap-2">
-            <button type="button" onClick={save} disabled={busy}
-              className="rounded bg-white px-3 py-2 text-sm font-semibold text-slate-900 disabled:opacity-50">
+          {saveError && <FormError>Could not save tags: {saveError}</FormError>}
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setEditing(false)} disabled={busy}>Cancel</Button>
+            <Button variant="primary" onClick={save} disabled={busy}>
               {busy ? 'Saving…' : 'Save tags'}
-            </button>
-            <button type="button" onClick={() => setEditing(false)} disabled={busy}
-              className="rounded border border-slate-500 px-3 py-2 text-sm">
-              Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
-    </section>
+    </Card>
   )
 }
 
@@ -231,72 +233,98 @@ export default function ListingDetailPage({ id }: { id: string }) {
     }
   }, [id])
 
+  if (error) {
+    return (
+      <Page title="Listing" back={{ href: hrefFor.listings(), label: '← All listings' }}>
+        <FormError>Could not load listing: {error}</FormError>
+      </Page>
+    )
+  }
+
+  if (!listing) {
+    return (
+      <Page title="Listing" back={{ href: hrefFor.listings(), label: '← All listings' }}>
+        <p className="text-sm text-ink-3">Loading…</p>
+      </Page>
+    )
+  }
+
   return (
-    <section className="space-y-8">
-      <a href={hrefFor.listings()} className="text-sm underline">← All listings</a>
-      {error && <p role="alert" className="text-red-400">Could not load listing: {error}</p>}
-      {!error && !listing && <p>Loading…</p>}
-      {listing && (
+    <Page title={listing.name} back={{ href: hrefFor.listings(), label: '← All listings' }}
+      meta={(
         <>
-          <header>
-            <h1 className="text-2xl font-bold">{listing.name}</h1>
-            <p className="text-sm text-slate-400">
-              {listing.is_own ? 'Own' : 'Competitor'} · {listing.source} ·{' '}
-              {listing.active ? 'Active' : 'Inactive'}
-              {listing.competitor_name && <> · {listing.competitor_name}</>}
-            </p>
-            {listing.url && (
-              <a href={listing.url} target="_blank" rel="noreferrer" className="text-sm underline break-all">
-                {listing.url}
-              </a>
-            )}
-            <a href={hrefFor.importPage(listing.id)} className="block text-sm underline">Import from page</a>
-          </header>
-          <ListingTagsSection listingId={listing.id} />
-          {editing ? (
-            <EditListingForm listing={listing} onCancel={() => setEditing(false)}
-              onSaved={(updated) => {
-                setListing(updated)
-                setEditing(false)
-              }} />
-          ) : (
-            <button type="button" onClick={() => setEditing(true)}
-              className="rounded border border-slate-500 px-3 py-2 text-sm">
-              Edit listing
-            </button>
-          )}
-          <div className="space-y-2">
-            {confirmCount === null ? (
-              <button type="button" onClick={askToDelete} disabled={deleteBusy}
-                className="rounded border border-red-500 px-3 py-2 text-sm text-red-400 disabled:opacity-50">
-                Delete listing
-              </button>
-            ) : (
-              <div role="alertdialog" aria-label="Confirm delete" className="space-y-2 rounded border border-red-500 p-4">
-                <p>
-                  Delete “{listing.name}”? This will also delete{' '}
-                  {plural(confirmCount.snapshots, 'snapshot', 'snapshots')} and{' '}
-                  {plural(confirmCount.reviews, 'review', 'reviews')}. This can’t be undone.
-                </p>
-                <div className="flex gap-2">
-                  <button type="button" onClick={confirmDelete} disabled={deleteBusy}
-                    className="rounded bg-red-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
-                    {deleteBusy ? 'Deleting…' : 'Yes, delete listing'}
-                  </button>
-                  <button type="button" onClick={() => setConfirmCount(null)} disabled={deleteBusy}
-                    className="rounded border border-slate-500 px-3 py-2 text-sm">
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-            {deleteError && <p role="alert" className="text-sm text-red-400">Could not delete: {deleteError}</p>}
-          </div>
-          <SnapshotForm listingId={listing.id} onSaved={() => setRefreshKey((k) => k + 1)} />
-          <SnapshotList listingId={listing.id} refreshKey={refreshKey} />
-          <ReviewsSection listingId={listing.id} />
+          <Badge tone={listing.is_own ? 'strong' : 'neutral'}>{listing.is_own ? 'Own' : 'Competitor'}</Badge>
+          <Badge tone={listing.active ? 'positive' : 'neutral'}>{listing.active ? 'Active' : 'Inactive'}</Badge>
+          <span>{SOURCE_LABELS[listing.source] ?? listing.source}</span>
+          {listing.competitor_name && <span>· {listing.competitor_name}</span>}
         </>
       )}
-    </section>
+      actions={(
+        <>
+          <ButtonLink href={hrefFor.importPage(listing.id)}>Import from page</ButtonLink>
+          {!editing && <Button onClick={() => setEditing(true)}>Edit listing</Button>}
+          <Button variant="danger" onClick={askToDelete} disabled={deleteBusy}>Delete listing</Button>
+        </>
+      )}>
+      {listing.url && (
+        <a href={listing.url} target="_blank" rel="noreferrer"
+          className="block truncate text-sm font-medium text-accent hover:underline">
+          {listing.url}
+        </a>
+      )}
+
+      {confirmCount !== null && (
+        <Dialog label="Confirm delete" title="Delete listing?"
+          onClose={deleteBusy ? undefined : () => setConfirmCount(null)}
+          actions={(
+            <>
+              <button type="button" onClick={confirmDelete} disabled={deleteBusy} className={dangerSolidClass()}>
+                {deleteBusy ? 'Deleting…' : 'Yes, delete listing'}
+              </button>
+              <button type="button" onClick={() => setConfirmCount(null)} disabled={deleteBusy}
+                className={buttonClass('secondary')}>
+                Cancel
+              </button>
+            </>
+          )}>
+          <p className="text-ink">
+            Delete “{listing.name}”? This will also delete{' '}
+            {plural(confirmCount.snapshots, 'snapshot', 'snapshots')} and{' '}
+            {plural(confirmCount.reviews, 'review', 'reviews')}. This can’t be undone.
+          </p>
+          {deleteError && <p role="alert" className="text-sm text-negative-deep">Could not delete: {deleteError}</p>}
+        </Dialog>
+      )}
+      {confirmCount === null && deleteError && <FormError>Could not delete: {deleteError}</FormError>}
+
+      {editing && (
+        <EditListingForm listing={listing} onCancel={() => setEditing(false)}
+          onSaved={(updated) => {
+            setListing(updated)
+            setEditing(false)
+          }} />
+      )}
+
+      <Tabs label="Listing sections" tabs={[
+        {
+          id: 'overview',
+          label: 'Overview',
+          content: <ListingTagsSection listingId={listing.id} />,
+        },
+        {
+          id: 'snapshots',
+          label: 'Snapshots',
+          content: (
+            <div className="space-y-6">
+              <Card>
+                <SnapshotForm listingId={listing.id} onSaved={() => setRefreshKey((k) => k + 1)} />
+              </Card>
+              <SnapshotList listingId={listing.id} refreshKey={refreshKey} />
+            </div>
+          ),
+        },
+        { id: 'reviews', label: 'Reviews', content: <ReviewsSection listingId={listing.id} /> },
+      ]} />
+    </Page>
   )
 }

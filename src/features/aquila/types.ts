@@ -1,7 +1,15 @@
 import type { ProductOption } from './parse'
 
-export const LISTING_SOURCES = ['viator', 'tripadvisor', 'manual'] as const
+export const LISTING_SOURCES = ['viator', 'tripadvisor', 'getyourguide', 'manual'] as const
 export type ListingSource = (typeof LISTING_SOURCES)[number]
+
+/** How each source is shown in dropdowns. The stored value stays lowercase. */
+export const SOURCE_LABELS: Record<ListingSource, string> = {
+  viator: 'Viator',
+  tripadvisor: 'TripAdvisor',
+  getyourguide: 'GetYourGuide',
+  manual: 'Manual',
+}
 
 /** Columns written when creating a row in mt_listings. */
 export type ListingInsert = {
@@ -118,4 +126,23 @@ export type SnapshotOptionInsert = {
 /** A row read back from mt_snapshot_options. */
 export type SnapshotOption = SnapshotOptionInsert & {
   id: string
+}
+
+// ---------- Ask AI ----------
+
+export type SuggestionStatus = 'ok' | 'error'
+
+/** A row read back from mt_suggestions: one question asked of Ask AI, and its answer. */
+export type Suggestion = {
+  id: string
+  created_at: string
+  question: string
+  /** The chosen place and type tags, together. */
+  tag_ids: string[] | null
+  listing_ids: string[] | null
+  snapshot_ids: string[] | null
+  model: string
+  /** Empty when the AI call failed. */
+  answer: string | null
+  status: SuggestionStatus
 }

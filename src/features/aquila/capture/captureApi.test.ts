@@ -1,20 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { callsOf, createFakeSupabase, type Query, type Result } from '../test/fakeSupabase'
 import { supabase } from '../../../lib/supabase'
 import { emptySnapshotForm } from '../mapping'
+import type { SnapshotInsert } from '../types'
 import { optionRows, parsePricedFor, saveAssistedSnapshot, saveSnapshotWithOptions } from './captureApi'
 
-vi.mock('../../../lib/supabase', () => ({ supabase: { from: vi.fn() } }))
+vi.mock('../../../lib/supabase', () => ({ supabase: { from: vi.fn(), rpc: vi.fn() } }))
 
-let respond: (q: Query) => Result
-let queries: Query[]
+type RpcArgs = { p_snapshot: Record<string, unknown>; p_options: Record<string, unknown>[] }
+let rpcResult: { data: unknown; error: { message: string } | null }
 
 beforeEach(() => {
-  respond = () => ({ data: { id: 's1' }, error: null })
-  const fake = createFakeSupabase((q) => respond(q))
-  queries = fake.queries
-  vi.mocked(supabase.from).mockImplementation(fake.client.from as never)
+  rpcResult = { data: 's1', error: null }
+  vi.mocked(supabase.rpc).mockReset()
+  vi.mocked(supabase.rpc).mockImplementation((() => Promise.resolve(rpcResult)) as never)
+  // No table is ever written directly; any .from() call fails the test.
+  vi.mocked(supabase.from).mockImplementation(((t: string) => {
+    throw new Error(`unexpected direct table access: ${t}`)
+  }) as never)
 })
+
+const rpcCalls = () => vi.mocked(supabase.rpc).mock.calls as unknown as [string, RpcArgs][]
+const sent = () => rpcCalls()[0][1]
 
 const form = {
   ...emptySnapshotForm(),
@@ -27,12 +33,13 @@ const form = {
 }
 
 describe('saveAssistedSnapshot', () => {
-  it('inserts into mt_snapshots with method assisted, the raw page, and the exact columns', async () => {
+  it('makes one mt_save_snapshot call with the snapshot (without options) and its option rows', async () => {
     const r = await saveAssistedSnapshot('L1', form, '<html>raw</html>', 'raw text')
-    expect(r.ok).toBe(true)
-    expect(queries.map((q) => q.table)).toEqual(['mt_snapshots', 'mt_snapshot_options'])
-    const row = callsOf(queries[0], 'insert')[0][0] as Record<string, unknown>
-    expect(row).toMatchObject({
+    expect(r).toEqual({ ok: true, id: 's1' })
+    expect(rpcCalls()).toHaveLength(1)
+    expect(rpcCalls()[0][0]).toBe('mt_save_snapshot')
+    expect(Object.keys(sent()).sort()).toEqual(['p_options', 'p_snapshot'])
+    expect(sent().p_snapshot).toMatchObject({
       listing_id: 'L1',
       method: 'assisted',
       status: 'complete',
@@ -40,35 +47,48 @@ describe('saveAssistedSnapshot', () => {
       raw_text: 'raw text',
       title: 'Notre-Dame tour',
       languages: ['English', 'French'],
-      options: [
-        { name: 'Shared', description: null, price: null },
-        { name: 'Private', description: null, price: 300 },
-      ],
       rating: 4.5,
       review_count: 283,
     })
-    expect(Object.keys(row).sort()).toEqual([
+    expect(Object.keys(sent().p_snapshot).sort()).toEqual([
       'duration', 'exclusions', 'group_type', 'highlights', 'inclusions', 'itinerary',
-      'languages', 'listing_id', 'method', 'options', 'overview', 'rating', 'raw_html', 'raw_text',
+      'languages', 'listing_id', 'method', 'overview', 'rating', 'raw_html', 'raw_text',
       'review_count', 'status', 'title', 'urgency_text', 'why_this',
+    ])
+    expect(sent().p_options).toEqual([
+      { sort_order: 0, name: 'Shared', description: null, price_per_person: null, travelers: null, price_date: null },
+      { sort_order: 1, name: 'Private', description: null, price_per_person: 300, travelers: null, price_date: null },
     ])
   })
 
   it('saves status partial when a core field is blank', async () => {
     await saveAssistedSnapshot('L1', { ...form, duration: '' }, '<html></html>', '')
-    expect(callsOf(queries[0], 'insert')[0][0]).toMatchObject({ status: 'partial', method: 'assisted' })
+    expect(sent().p_snapshot).toMatchObject({ status: 'partial', method: 'assisted' })
   })
 
-  it('returns field errors and inserts nothing when the form is invalid', async () => {
+  it('returns field errors and calls nothing when the form is invalid', async () => {
     const r = await saveAssistedSnapshot('L1', { ...form, rating: '11' }, '<html></html>', '')
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.errors.rating).toBeDefined()
-    expect(queries).toHaveLength(0)
+    expect(rpcCalls()).toHaveLength(0)
   })
 
-  it('throws the Supabase error message', async () => {
-    respond = () => ({ data: null, error: { message: 'column "raw_html" does not exist' } })
-    await expect(saveAssistedSnapshot('L1', form, '<html></html>', '')).rejects.toThrow('raw_html')
+  it('throws the database error when the call fails, and makes no other call', async () => {
+    rpcResult = { data: null, error: { message: 'new row violates check constraint' } }
+    await expect(saveAssistedSnapshot('L1', form, '<html></html>', '')).rejects.toThrow('violates check constraint')
+    expect(rpcCalls()).toHaveLength(1)
+  })
+
+  it('accepts the new id as a bare value, a row, or a one-row array', async () => {
+    for (const data of ['s1', { id: 's1' }, [{ id: 's1' }]]) {
+      rpcResult = { data, error: null }
+      expect(await saveAssistedSnapshot('L1', form, '', '')).toEqual({ ok: true, id: 's1' })
+    }
+  })
+
+  it('throws when the call returns no id', async () => {
+    rpcResult = { data: null, error: null }
+    await expect(saveAssistedSnapshot('L1', form, '', '')).rejects.toThrow(/did not return the new snapshot id/)
   })
 })
 
@@ -83,72 +103,51 @@ describe('saveAssistedSnapshot options', () => {
       'Walk-in',
     ].join('\n'),
   }
-  const optionInsert = () => queries.find((q) => q.table === 'mt_snapshot_options')!
 
-  it('keeps the options column on the snapshot and inserts one mt_snapshot_options row per option', async () => {
-    const r = await saveAssistedSnapshot('L1', priced, '<html></html>', '', NOW)
-    expect(r).toEqual({ ok: true, id: 's1' })
-    expect(queries.map((q) => q.table)).toEqual(['mt_snapshots', 'mt_snapshot_options'])
-    const snap = callsOf(queries[0], 'insert')[0][0] as { options: unknown[] }
-    expect(snap.options).toHaveLength(4)
-    expect(callsOf(optionInsert(), 'insert')[0][0]).toEqual([
-      { snapshot_id: 's1', sort_order: 0, name: 'Shared', description: 'Priced for 2 travelers, Nov 25', price_per_person: 95.2, travelers: 2, price_date: '2026-11-25' },
-      { snapshot_id: 's1', sort_order: 1, name: 'Private', description: 'Priced for 1 traveler', price_per_person: 147.98, travelers: 1, price_date: null },
-      { snapshot_id: 's1', sort_order: 2, name: 'Sunset', description: 'Pickup included', price_per_person: 80, travelers: null, price_date: null },
-      { snapshot_id: 's1', sort_order: 3, name: 'Walk-in', description: null, price_per_person: null, travelers: null, price_date: null },
+  it('sends one option row per option, in order, with travelers and date read from the description', async () => {
+    await saveAssistedSnapshot('L1', priced, '<html></html>', '', NOW)
+    expect(sent().p_options).toEqual([
+      { sort_order: 0, name: 'Shared', description: 'Priced for 2 travelers, Nov 25', price_per_person: 95.2, travelers: 2, price_date: '2026-11-25' },
+      { sort_order: 1, name: 'Private', description: 'Priced for 1 traveler', price_per_person: 147.98, travelers: 1, price_date: null },
+      { sort_order: 2, name: 'Sunset', description: 'Pickup included', price_per_person: 80, travelers: null, price_date: null },
+      { sort_order: 3, name: 'Walk-in', description: null, price_per_person: null, travelers: null, price_date: null },
     ])
+    expect(sent().p_snapshot).not.toHaveProperty('options')
   })
 
-  it('inserts no option rows when there are no options', async () => {
+  it('sends an empty option list when there are no options', async () => {
     await saveAssistedSnapshot('L1', { ...form, options: '' }, '<html></html>', '')
-    expect(queries.map((q) => q.table)).toEqual(['mt_snapshots'])
-  })
-
-  it('deletes the snapshot again and throws when the options cannot be saved', async () => {
-    respond = (q) => {
-      if (q.table === 'mt_snapshot_options') return { data: null, error: { message: 'relation denied' } }
-      if (callsOf(q, 'delete').length) return { data: [{ id: 's1' }], error: null }
-      return { data: { id: 's1' }, error: null }
-    }
-    await expect(saveAssistedSnapshot('L1', priced, '<html></html>', '', NOW)).rejects.toThrow(
-      /snapshot was not saved: relation denied/,
-    )
-    const del = queries.find((q) => q.table === 'mt_snapshots' && callsOf(q, 'delete').length)!
-    expect(callsOf(del, 'eq')).toEqual([['id', 's1']])
-  })
-
-  it('says the snapshot was left behind when the undo also fails', async () => {
-    respond = (q) => {
-      if (q.table === 'mt_snapshot_options') return { data: null, error: { message: 'relation denied' } }
-      if (callsOf(q, 'delete').length) return { data: [], error: null }
-      return { data: { id: 's1' }, error: null }
-    }
-    await expect(saveAssistedSnapshot('L1', priced, '<html></html>', '', NOW)).rejects.toThrow(
-      /relation denied.*could not be removed.*Snapshot s1 exists without option rows/,
-    )
-  })
-
-  it('writes nothing to mt_snapshot_options when the snapshot insert fails', async () => {
-    respond = () => ({ data: null, error: { message: 'snapshot denied' } })
-    await expect(saveAssistedSnapshot('L1', priced, '<html></html>', '', NOW)).rejects.toThrow('snapshot denied')
-    expect(queries.map((q) => q.table)).toEqual(['mt_snapshots'])
+    expect(sent().p_options).toEqual([])
   })
 })
 
-describe('saveSnapshotWithOptions (manual rows)', () => {
-  it('saves a manual snapshot and its option rows through the same path', async () => {
-    const id = await saveSnapshotWithOptions({
-      listing_id: 'L1', method: 'manual', status: 'partial', title: null, overview: null, duration: null,
-      languages: [], group_type: null, highlights: [], inclusions: null, exclusions: null, why_this: null,
-      itinerary: [], rating: null, review_count: null, urgency_text: null,
-      options: [{ name: 'Shared', description: 'Group', price: 150 }],
-    })
-    expect(id).toBe('s1')
-    expect(queries.map((q) => q.table)).toEqual(['mt_snapshots', 'mt_snapshot_options'])
-    expect(callsOf(queries[0], 'insert')[0][0]).toMatchObject({ method: 'manual' })
-    expect(callsOf(queries[1], 'insert')[0][0]).toEqual([
-      { snapshot_id: 's1', sort_order: 0, name: 'Shared', description: 'Group', price_per_person: 150, travelers: null, price_date: null },
+describe('saveSnapshotWithOptions', () => {
+  const manual: SnapshotInsert = {
+    listing_id: 'L1', method: 'manual', status: 'partial', title: null, overview: null, duration: null,
+    languages: [], group_type: null, highlights: [], inclusions: null, exclusions: null, why_this: null,
+    itinerary: [], rating: null, review_count: null, urgency_text: null,
+    options: [{ name: 'Shared', description: 'Group', price: 150 }],
+  }
+
+  it('saves a manual snapshot through the same single call', async () => {
+    expect(await saveSnapshotWithOptions(manual)).toBe('s1')
+    expect(rpcCalls()).toHaveLength(1)
+    expect(sent().p_snapshot).toMatchObject({ method: 'manual', listing_id: 'L1' })
+    expect(sent().p_options).toEqual([
+      { sort_order: 0, name: 'Shared', description: 'Group', price_per_person: 150, travelers: null, price_date: null },
     ])
+  })
+
+  it('an option without a name fails the whole save and sends nothing', async () => {
+    const bad = { ...manual, options: [manual.options[0], { name: '  ', description: null, price: 99 }] }
+    await expect(saveSnapshotWithOptions(bad)).rejects.toThrow(/option 2 has no name, so nothing was saved/i)
+    expect(rpcCalls()).toHaveLength(0)
+  })
+
+  it('a database rejection of any option fails the whole save', async () => {
+    rpcResult = { data: null, error: { message: 'null value in column "name" of relation "mt_snapshot_options"' } }
+    await expect(saveSnapshotWithOptions(manual)).rejects.toThrow(/mt_snapshot_options/)
+    expect(rpcCalls()).toHaveLength(1)
   })
 })
 
@@ -189,8 +188,8 @@ describe('parsePricedFor', () => {
   })
 
   it('optionRows maps every option, in order', () => {
-    expect(optionRows('S9', [{ name: 'A', description: 'Priced for 2 travelers, Nov 26', price: 10 }], NOW)).toEqual([
-      { snapshot_id: 'S9', sort_order: 0, name: 'A', description: 'Priced for 2 travelers, Nov 26', price_per_person: 10, travelers: 2, price_date: '2026-11-26' },
+    expect(optionRows([{ name: 'A', description: 'Priced for 2 travelers, Nov 26', price: 10 }], NOW)).toEqual([
+      { sort_order: 0, name: 'A', description: 'Priced for 2 travelers, Nov 26', price_per_person: 10, travelers: 2, price_date: '2026-11-26' },
     ])
   })
 })

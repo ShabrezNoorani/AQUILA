@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { saveSnapshotWithOptions } from './capture/captureApi'
-import { TextField } from './fields'
 import { emptySnapshotForm, snapshotFormToRow, type SnapshotField, type SnapshotForm as Form } from './mapping'
 import type { SnapshotInsert } from './types'
+import { Button, FormError, TextField } from './ui'
 
 type Errors = Partial<Record<SnapshotField, string>>
 
@@ -66,21 +66,25 @@ export default function SnapshotForm({ listingId, onSaved, initial, onSubmitRow 
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="space-y-4">
-      <h2 className="text-xl font-semibold">{initial ? 'Edit snapshot' : 'Add snapshot (manual)'}</h2>
-      <div className="grid gap-4 md:grid-cols-2">
+    <form onSubmit={handleSubmit} noValidate className="space-y-5">
+      <div className="space-y-1">
+        <h2 className="text-base font-semibold text-ink">{initial ? 'Edit snapshot' : 'Add snapshot (manual)'}</h2>
+        {!initial && <p className="text-sm text-ink-3">Type what the listing shows today. Blank fields are saved as empty.</p>}
+      </div>
+      <div className="grid gap-5 md:grid-cols-2">
         {FIELDS.map((f) => (
           <TextField key={f.key} id={`${initial ? 'edit-snapshot' : 'snapshot'}-${f.key}`} label={f.label} value={form[f.key]}
             multiline={f.multiline} placeholder={f.placeholder} error={errors[f.key]}
             onChange={(v) => setForm((prev) => ({ ...prev, [f.key]: v }))} />
         ))}
       </div>
-      {errors.listing_id && <p role="alert" className="text-red-400">{errors.listing_id}</p>}
-      {saveError && <p role="alert" className="text-red-400">Could not save: {saveError}</p>}
-      <button type="submit" disabled={busy}
-        className="rounded bg-white px-3 py-2 font-semibold text-slate-900 disabled:opacity-50">
-        {busy ? 'Saving…' : 'Save snapshot'}
-      </button>
+      {errors.listing_id && <FormError>{errors.listing_id}</FormError>}
+      {saveError && <FormError>Could not save: {saveError}</FormError>}
+      <div className="flex justify-end">
+        <Button type="submit" variant="primary" disabled={busy}>
+          {busy ? 'Saving…' : 'Save snapshot'}
+        </Button>
+      </div>
     </form>
   )
 }

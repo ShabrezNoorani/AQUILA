@@ -6,7 +6,7 @@ import ImportPage from './ImportPage'
 import { BOOKMARKLET } from './bookmarklet'
 import viator2 from '../../../../fixtures/viator-2.html?raw'
 
-vi.mock('../../../lib/supabase', () => ({ supabase: { from: vi.fn() } }))
+vi.mock('../../../lib/supabase', () => ({ supabase: { from: vi.fn(), rpc: vi.fn() } }))
 
 let respond: (q: Query) => Result
 let queries: Query[]
@@ -16,9 +16,14 @@ beforeEach(() => {
   const fake = createFakeSupabase((q) => respond(q))
   queries = fake.queries
   vi.mocked(supabase.from).mockImplementation(fake.client.from as never)
+  vi.mocked(supabase.rpc).mockReset()
+  vi.mocked(supabase.rpc).mockImplementation((() => Promise.resolve({ data: 's1', error: null })) as never)
 })
 
-const inserts = () => queries.filter((q) => callsOf(q, 'insert').length > 0)
+type RpcArgs = { p_snapshot: Record<string, unknown>; p_options: Record<string, unknown>[] }
+const rpcCalls = () => vi.mocked(supabase.rpc).mock.calls as unknown as [string, RpcArgs][]
+/** Every save attempt: direct inserts and mt_save_snapshot calls. */
+const inserts = () => [...queries.filter((q) => callsOf(q, 'insert').length > 0), ...rpcCalls()]
 
 const ld = {
   '@type': ['Product', 'TouristTrip'],
@@ -93,9 +98,15 @@ describe('ImportPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /save snapshot/i }))
 
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
-    const [q] = inserts()
-    expect(q.table).toBe('mt_snapshots')
-    expect(callsOf(q, 'insert')[0][0]).toMatchObject({
+    expect(queries.filter((q) => callsOf(q, 'insert').length > 0)).toHaveLength(0)
+    expect(rpcCalls()).toHaveLength(1)
+    const [fn, { p_snapshot, p_options }] = rpcCalls()[0]
+    expect(fn).toBe('mt_save_snapshot')
+    expect(p_options).toEqual([
+      { sort_order: 0, name: 'Shared', description: null, price_per_person: 40, travelers: null, price_date: null },
+    ])
+    expect(p_snapshot).not.toHaveProperty('options')
+    expect(p_snapshot).toMatchObject({
       listing_id: 'L1',
       method: 'assisted',
       status: 'complete',
@@ -103,13 +114,11 @@ describe('ImportPage', () => {
       duration: '2 hours (approx.)',
       group_type: 'Shared',
       languages: ['English'],
-      options: [{ name: 'Shared', description: null, price: 40 }],
       rating: 4.6,
       review_count: 98,
       raw_html: pageHtml,
     })
-    const row = callsOf(q, 'insert')[0][0] as { raw_text: string }
-    expect(row.raw_text).toContain('2 hours (approx.)')
+    expect(p_snapshot.raw_text).toContain('2 hours (approx.)')
   })
 
   it('shows the viator-2 overview in the preview, one paragraph per line', async () => {

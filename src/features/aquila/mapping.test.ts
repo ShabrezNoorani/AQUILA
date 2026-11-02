@@ -65,7 +65,7 @@ describe('listingFormToRow', () => {
     const r = listingFormToRow({
       ...emptyListingForm(),
       name: 'X',
-      source: 'getyourguide' as ListingForm['source'],
+      source: 'expedia' as ListingForm['source'],
     })
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.errors.source).toBeDefined()

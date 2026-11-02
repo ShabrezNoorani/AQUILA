@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { callsOf, createFakeSupabase, type Query, type Result } from './test/fakeSupabase'
 import { supabase } from '../../lib/supabase'
+import ListingDetailPage from './ListingDetailPage'
 import ListingsPage from './ListingsPage'
 import NewListingForm from './NewListingForm'
 import SnapshotForm from './SnapshotForm'
@@ -9,7 +10,7 @@ import SnapshotList from './SnapshotList'
 import viator2 from '../../../fixtures/viator-2.html?raw'
 import { parseViatorListing } from './capture/viatorParser'
 
-vi.mock('../../lib/supabase', () => ({ supabase: { from: vi.fn() } }))
+vi.mock('../../lib/supabase', () => ({ supabase: { from: vi.fn(), rpc: vi.fn() } }))
 
 let respond: (q: Query) => Result
 let queries: Query[]
@@ -19,7 +20,14 @@ beforeEach(() => {
   const fake = createFakeSupabase((q) => respond(q))
   queries = fake.queries
   vi.mocked(supabase.from).mockImplementation(fake.client.from as never)
+  rpcResult = { data: 's1', error: null }
+  vi.mocked(supabase.rpc).mockReset()
+  vi.mocked(supabase.rpc).mockImplementation((() => Promise.resolve(rpcResult)) as never)
 })
+
+type RpcArgs = { p_snapshot: Record<string, unknown>; p_options: Record<string, unknown>[] }
+let rpcResult: { data: unknown; error: { message: string } | null }
+const rpcCalls = () => vi.mocked(supabase.rpc).mock.calls as unknown as [string, RpcArgs][]
 
 const inserts = () => queries.filter((q) => callsOf(q, 'insert').length > 0)
 
@@ -100,13 +108,12 @@ describe('NewListingForm', () => {
 })
 
 describe('SnapshotForm', () => {
-  it('saves a manual snapshot with parsed fields, partial because duration is blank', async () => {
-    respond = () => ({ data: { id: 's1' }, error: null })
+  const set = (label: RegExp, value: string) =>
+    fireEvent.change(screen.getByLabelText(label), { target: { value } })
+
+  it('saves a manual snapshot with one mt_save_snapshot call, partial because duration is blank', async () => {
     const onSaved = vi.fn()
     render(<SnapshotForm listingId="L1" onSaved={onSaved} />)
-
-    const set = (label: RegExp, value: string) =>
-      fireEvent.change(screen.getByLabelText(label), { target: { value } })
     set(/^title/i, 'Red Dunes')
     set(/languages/i, 'English, Arabic')
     set(/highlights/i, 'Dunes\nSunset')
@@ -117,9 +124,11 @@ describe('SnapshotForm', () => {
     fireEvent.click(screen.getByRole('button', { name: /save snapshot/i }))
 
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
-    const [q] = inserts()
-    expect(q.table).toBe('mt_snapshots')
-    expect(callsOf(q, 'insert')[0][0]).toMatchObject({
+    expect(inserts()).toHaveLength(0)
+    expect(rpcCalls()).toHaveLength(1)
+    const [fn, { p_snapshot }] = rpcCalls()[0]
+    expect(fn).toBe('mt_save_snapshot')
+    expect(p_snapshot).toMatchObject({
       listing_id: 'L1',
       method: 'manual',
       status: 'partial',
@@ -127,19 +136,15 @@ describe('SnapshotForm', () => {
       languages: ['English', 'Arabic'],
       highlights: ['Dunes', 'Sunset'],
       itinerary: ['Pickup', 'Dinner'],
-      options: [{ name: 'Shared', description: 'Group', price: 150 }],
       rating: 4.5,
       review_count: 120,
     })
+    expect(p_snapshot).not.toHaveProperty('options')
   })
 
   it('saves status complete when every core field and a priced option are filled in', async () => {
-    respond = () => ({ data: { id: 's2' }, error: null })
     const onSaved = vi.fn()
     render(<SnapshotForm listingId="L1" onSaved={onSaved} />)
-
-    const set = (label: RegExp, value: string) =>
-      fireEvent.change(screen.getByLabelText(label), { target: { value } })
     set(/^title/i, 'Red Dunes')
     set(/^duration/i, '6 hours')
     set(/languages/i, 'English')
@@ -149,46 +154,107 @@ describe('SnapshotForm', () => {
     fireEvent.click(screen.getByRole('button', { name: /save snapshot/i }))
 
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
-    expect(callsOf(inserts()[0], 'insert')[0][0]).toMatchObject({ method: 'manual', status: 'complete' })
+    expect(rpcCalls()[0][1].p_snapshot).toMatchObject({ method: 'manual', status: 'complete' })
   })
 
-  it('also saves each option to mt_snapshot_options, in order, through the shared save path', async () => {
-    respond = () => ({ data: { id: 's7' }, error: null })
+  it('sends each option as a row, in order, in the same call', async () => {
     const onSaved = vi.fn()
     render(<SnapshotForm listingId="L1" onSaved={onSaved} />)
-    fireEvent.change(screen.getByLabelText(/options/i), {
-      target: { value: 'Shared | Priced for 2 travelers, Dec 5, 2026 | 150\nPrivate |  | 300' },
-    })
+    set(/options/i, 'Shared | Priced for 2 travelers, Dec 5, 2026 | 150\nPrivate |  | 300')
     fireEvent.click(screen.getByRole('button', { name: /save snapshot/i }))
 
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
-    expect(inserts().map((q) => q.table)).toEqual(['mt_snapshots', 'mt_snapshot_options'])
-    expect(callsOf(inserts()[1], 'insert')[0][0]).toEqual([
-      { snapshot_id: 's7', sort_order: 0, name: 'Shared', description: 'Priced for 2 travelers, Dec 5, 2026', price_per_person: 150, travelers: 2, price_date: '2026-12-05' },
-      { snapshot_id: 's7', sort_order: 1, name: 'Private', description: null, price_per_person: 300, travelers: null, price_date: null },
+    expect(rpcCalls()).toHaveLength(1)
+    expect(rpcCalls()[0][1].p_options).toEqual([
+      { sort_order: 0, name: 'Shared', description: 'Priced for 2 travelers, Dec 5, 2026', price_per_person: 150, travelers: 2, price_date: '2026-12-05' },
+      { sort_order: 1, name: 'Private', description: null, price_per_person: 300, travelers: null, price_date: null },
     ])
   })
 
-  it('shows the error and does not report success when the options cannot be saved', async () => {
-    respond = (q) => {
-      if (q.table === 'mt_snapshot_options') return { data: null, error: { message: 'options denied' } }
-      if (callsOf(q, 'delete').length) return { data: [{ id: 's8' }], error: null }
-      return { data: { id: 's8' }, error: null }
-    }
+  it('shows the error when the call fails, saves nothing, and does not report success', async () => {
+    rpcResult = { data: null, error: { message: 'permission denied for function mt_save_snapshot' } }
     const onSaved = vi.fn()
     render(<SnapshotForm listingId="L1" onSaved={onSaved} />)
-    fireEvent.change(screen.getByLabelText(/options/i), { target: { value: 'Shared | Group | 150' } })
+    set(/^title/i, 'Red Dunes')
+    set(/options/i, 'Shared | Group | 150')
     fireEvent.click(screen.getByRole('button', { name: /save snapshot/i }))
-    expect(await screen.findByText(/snapshot was not saved: options denied/i)).toBeTruthy()
+    expect(await screen.findByText(/could not save: permission denied for function mt_save_snapshot/i)).toBeTruthy()
     expect(onSaved).not.toHaveBeenCalled()
+    expect(rpcCalls()).toHaveLength(1)
+    expect(inserts()).toHaveLength(0)
+    // The form keeps what was typed so it can be saved again.
+    expect((screen.getByLabelText(/^title/i) as HTMLInputElement).value).toBe('Red Dunes')
   })
 
-  it('shows a parse error for an invalid price and does not insert', async () => {
+  it('an option without a name fails the whole save, and nothing is sent', async () => {
     render(<SnapshotForm listingId="L1" onSaved={() => {}} />)
-    fireEvent.change(screen.getByLabelText(/options/i), { target: { value: 'Shared | Group | cheap' } })
+    set(/^title/i, 'Red Dunes')
+    set(/options/i, 'Shared | Group | 150\n | Private | 300')
+    fireEvent.click(screen.getByRole('button', { name: /save snapshot/i }))
+    expect(await screen.findByText(/line 2: option name is required/i)).toBeTruthy()
+    expect(rpcCalls()).toHaveLength(0)
+    expect(inserts()).toHaveLength(0)
+  })
+
+  it('shows a parse error for an invalid price and does not save', async () => {
+    render(<SnapshotForm listingId="L1" onSaved={() => {}} />)
+    set(/options/i, 'Shared | Group | cheap')
     fireEvent.click(screen.getByRole('button', { name: /save snapshot/i }))
     expect(await screen.findByText(/price/i, { selector: '[role=alert]' })).toBeTruthy()
+    expect(rpcCalls()).toHaveLength(0)
     expect(inserts()).toHaveLength(0)
+  })
+})
+
+describe('source dropdowns', () => {
+  const labels = (select: HTMLElement) =>
+    within(select).getAllByRole('option').map((o) => [(o as HTMLOptionElement).value, o.textContent])
+  const expected = [
+    ['viator', 'Viator'],
+    ['tripadvisor', 'TripAdvisor'],
+    ['getyourguide', 'GetYourGuide'],
+    ['manual', 'Manual'],
+  ]
+
+  it('the new listing form offers GetYourGuide and saves it as getyourguide', async () => {
+    respond = (q) => {
+      if (q.table === 'mt_tags') {
+        return { data: [{ id: 'T1', name: 'Tour', kind: 'type' }, { id: 'P1', name: 'Dubai', kind: 'place' }], error: null }
+      }
+      return { data: { id: 'new-1' }, error: null }
+    }
+    const onCreated = vi.fn()
+    render(<NewListingForm onCreated={onCreated} />)
+    expect(labels(screen.getByLabelText(/source/i))).toEqual(expected)
+
+    fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'GYG Safari' } })
+    fireEvent.change(screen.getByLabelText(/source/i), { target: { value: 'getyourguide' } })
+    fireEvent.click(await screen.findByLabelText('Tour'))
+    fireEvent.click(screen.getByLabelText('Dubai'))
+    fireEvent.click(screen.getByRole('button', { name: /create listing/i }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-1'))
+    expect(callsOf(inserts()[0], 'insert')[0][0]).toMatchObject({ source: 'getyourguide' })
+  })
+
+  it('the edit listing form offers GetYourGuide and saves it as getyourguide', async () => {
+    const listing = { id: 'L1', name: 'Rival', is_own: false, source: 'viator', url: null, competitor_name: null, active: true }
+    respond = (q) => {
+      if (q.table === 'mt_listings' && callsOf(q, 'update').length) {
+        return { data: { ...listing, ...(callsOf(q, 'update')[0][0] as object) }, error: null }
+      }
+      if (q.table === 'mt_listings') return { data: listing, error: null }
+      return { data: [], error: null }
+    }
+    render(<ListingDetailPage id="L1" />)
+    fireEvent.click(await screen.findByRole('button', { name: /edit listing/i }))
+    const select = screen.getByLabelText(/source/i)
+    expect(labels(select)).toEqual(expected)
+
+    fireEvent.change(select, { target: { value: 'getyourguide' } })
+    fireEvent.click(screen.getByRole('button', { name: /save listing/i }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: /save listing/i })).toBeNull())
+    const update = queries.find((q) => callsOf(q, 'update').length)!
+    expect(callsOf(update, 'update')[0][0]).toMatchObject({ source: 'getyourguide' })
   })
 })
 

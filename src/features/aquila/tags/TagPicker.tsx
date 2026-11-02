@@ -3,6 +3,7 @@
 
 import { hrefFor } from '../router'
 import type { Tag } from '../types'
+import { Badge } from '../ui'
 import { tagsOfKind } from './tagMapping'
 
 type Props = {
@@ -15,6 +16,11 @@ type Props = {
   disabled?: boolean
 }
 
+/** A selectable pill: the native input stays visible for clarity and keyboard use. */
+const pill = (on: boolean) =>
+  `flex cursor-pointer items-center gap-2 rounded-card border px-3 py-1.5 text-sm transition-colors has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60 ${
+    on ? 'border-ink-2 bg-paper font-medium text-ink' : 'border-line bg-surface text-ink-2 hover:bg-paper hover:text-ink'}`
+
 export default function TagPicker({ idPrefix, tags, selected, onChange, error, disabled }: Props) {
   const types = tagsOfKind(tags, 'type')
   const places = tagsOfKind(tags, 'place')
@@ -26,20 +32,20 @@ export default function TagPicker({ idPrefix, tags, selected, onChange, error, d
     onChange(on ? [...selected.filter((s) => s !== id), id] : selected.filter((s) => s !== id))
 
   const empty = (what: string) => (
-    <p className="text-sm text-slate-400">
-      No {what} tags yet. <a href={hrefFor.tags()} className="underline">Add them on the Tags page</a>.
+    <p className="text-sm text-ink-3">
+      No {what} tags yet. <a href={hrefFor.tags()} className="font-medium text-accent hover:underline">Add them on the Tags page</a>.
     </p>
   )
 
   return (
-    <div className="space-y-3" aria-describedby={error ? `${idPrefix}-tags-error` : undefined}>
+    <div className="space-y-4" aria-describedby={error ? `${idPrefix}-tags-error` : undefined}>
       <fieldset className="space-y-1">
-        <legend className="text-sm font-medium">Type * (exactly one)</legend>
+        <legend className="mb-1.5 text-sm font-medium text-ink">Type * (exactly one)</legend>
         {types.length === 0 ? empty('type') : (
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
+          <div className="flex flex-wrap gap-2">
             {types.map((t) => (
-              <label key={t.id} className="flex items-center gap-2">
-                <input type="radio" name={`${idPrefix}-type`} value={t.id} disabled={disabled}
+              <label key={t.id} className={pill(chosen.has(t.id))}>
+                <input type="radio" className="accent-ink" name={`${idPrefix}-type`} value={t.id} disabled={disabled}
                   checked={chosen.has(t.id)} onChange={() => pickType(t.id)} />
                 {t.name}
               </label>
@@ -49,12 +55,12 @@ export default function TagPicker({ idPrefix, tags, selected, onChange, error, d
       </fieldset>
 
       <fieldset className="space-y-1">
-        <legend className="text-sm font-medium">Places * (at least one)</legend>
+        <legend className="mb-1.5 text-sm font-medium text-ink">Places * (at least one)</legend>
         {places.length === 0 ? empty('place') : (
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
+          <div className="flex flex-wrap gap-2">
             {places.map((t) => (
-              <label key={t.id} className="flex items-center gap-2">
-                <input type="checkbox" value={t.id} disabled={disabled}
+              <label key={t.id} className={pill(chosen.has(t.id))}>
+                <input type="checkbox" className="accent-ink" value={t.id} disabled={disabled}
                   checked={chosen.has(t.id)} onChange={(e) => togglePlace(t.id, e.target.checked)} />
                 {t.name}
               </label>
@@ -63,21 +69,18 @@ export default function TagPicker({ idPrefix, tags, selected, onChange, error, d
         )}
       </fieldset>
 
-      {error && <p role="alert" id={`${idPrefix}-tags-error`} className="text-sm text-red-400">{error}</p>}
+      {error && <p role="alert" id={`${idPrefix}-tags-error`} className="text-sm text-negative-deep">{error}</p>}
     </div>
   )
 }
 
 /** Small read-only chips showing a listing's tags. */
 export function TagChips({ tags }: { tags: Tag[] }) {
-  if (!tags.length) return <span className="text-slate-500">No tags</span>
+  if (!tags.length) return <span className="text-sm text-ink-3">No tags</span>
   return (
     <span className="flex flex-wrap gap-1">
       {tags.map((t) => (
-        <span key={t.id} data-kind={t.kind}
-          className={`rounded px-2 py-0.5 text-xs ${t.kind === 'type' ? 'bg-sky-800' : 'bg-emerald-800'}`}>
-          {t.name}
-        </span>
+        <Badge key={t.id} data-kind={t.kind} tone={t.kind === 'type' ? 'strong' : 'neutral'}>{t.name}</Badge>
       ))}
     </span>
   )

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { deleteSnapshot, fetchSnapshots, updateSnapshot } from './api'
 import { snapshotRowToForm } from './mapping'
-import ConfirmDialog from './reviews/ConfirmDialog'
 import SnapshotForm from './SnapshotForm'
 import type { Snapshot, SnapshotInsert, SnapshotUpdate } from './types'
+import { Badge, Button, ConfirmDialog, EmptyState, FormError } from './ui'
 
 /** The editable part of a mapped row: listing_id and method are never changed by an edit. */
 function toUpdate(row: SnapshotInsert): SnapshotUpdate {
@@ -23,8 +23,8 @@ function List({ label, items }: { label: string; items?: string[] | null }) {
   if (!items || items.length === 0) return null
   return (
     <div>
-      <dt className="text-slate-400">{label}</dt>
-      <dd><ul className="list-disc pl-5">{items.map((s, i) => <li key={i}>{s}</li>)}</ul></dd>
+      <dt className="text-xs font-medium uppercase tracking-wide text-ink-3">{label}</dt>
+      <dd className="mt-1 text-ink"><ul className="list-disc space-y-0.5 pl-5">{items.map((s, i) => <li key={i}>{s}</li>)}</ul></dd>
     </div>
   )
 }
@@ -33,8 +33,8 @@ function Text({ label, value }: { label: string; value?: string | number | null 
   if (value === null || value === undefined || value === '') return null
   return (
     <div>
-      <dt className="text-slate-400">{label}</dt>
-      <dd className="whitespace-pre-line">{value}</dd>
+      <dt className="text-xs font-medium uppercase tracking-wide text-ink-3">{label}</dt>
+      <dd className="mt-1 whitespace-pre-line text-ink">{value}</dd>
     </div>
   )
 }
@@ -63,35 +63,38 @@ export default function SnapshotList({ listingId, refreshKey }: { listingId: str
   }, [listingId, refreshKey, reloadKey])
 
   return (
-    <section className="space-y-3">
-      <h2 className="text-xl font-semibold">Snapshots</h2>
-      {error && <p role="alert" className="text-red-400">Could not load snapshots: {error}</p>}
-      {!error && !snapshots && <p>Loading…</p>}
-      {snapshots && snapshots.length === 0 && <p className="text-slate-400">No snapshots yet.</p>}
+    <section className="space-y-4">
+      <h2 className="text-base font-semibold text-ink">Snapshots</h2>
+      {error && <FormError>Could not load snapshots: {error}</FormError>}
+      {!error && !snapshots && <p className="text-sm text-ink-3">Loading…</p>}
+      {snapshots && snapshots.length === 0 && (
+        <EmptyState compact title="No snapshots yet." description="Add one by hand above, or import it from the listing’s page." />
+      )}
       {snapshots?.map((s) => (
-        <article key={s.id} className="rounded border border-slate-700 p-4 space-y-2">
+        <article key={s.id} className="space-y-4 rounded-card border border-line bg-surface p-6 shadow-sm shadow-ink/5">
           {editingId === s.id ? (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <SnapshotForm listingId={listingId} initial={snapshotRowToForm(s)}
                 onSubmitRow={(row) => updateSnapshot(s.id, toUpdate(row))}
                 onSaved={() => {
                   setEditingId(null)
                   reload()
                 }} />
-              <button type="button" onClick={() => setEditingId(null)}
-                className="rounded border border-slate-500 px-3 py-1 text-sm">
-                Cancel editing
-              </button>
+              <Button size="sm" onClick={() => setEditingId(null)}>Cancel editing</Button>
             </div>
           ) : (
           <>
-          <header>
-            <h3 className="font-semibold">{s.title || '(untitled)'}</h3>
-            <p className="text-xs text-slate-400">
-              {formatDate(s.captured_at)} · {s.method ?? '—'} · {s.status ?? '—'}
-            </p>
+          <header className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <h3 className="font-semibold text-ink">{s.title || '(untitled)'}</h3>
+              <p className="text-xs text-ink-3">{formatDate(s.captured_at)}</p>
+            </div>
+            <div className="flex gap-1.5">
+              <Badge>{s.method ?? '—'}</Badge>
+              <Badge tone={s.status === 'complete' ? 'positive' : 'neutral'}>{s.status ?? '—'}</Badge>
+            </div>
           </header>
-          <dl className="grid gap-2 text-sm md:grid-cols-2">
+          <dl className="grid gap-x-6 gap-y-4 border-t border-line pt-4 text-sm md:grid-cols-2">
             <Text label="Overview" value={s.overview} />
             <Text label="Duration" value={s.duration} />
             <Text label="Languages" value={s.languages?.join(', ')} />
@@ -122,15 +125,9 @@ export default function SnapshotList({ listingId, refreshKey }: { listingId: str
                 reload()
               }} />
           ) : (
-            <div className="flex gap-2">
-              <button type="button" onClick={() => { setConfirmingId(null); setEditingId(s.id) }}
-                className="rounded border border-slate-500 px-3 py-1 text-sm">
-                Edit
-              </button>
-              <button type="button" onClick={() => { setEditingId(null); setConfirmingId(s.id) }}
-                className="rounded border border-red-500 px-3 py-1 text-sm text-red-400">
-                Delete
-              </button>
+            <div className="flex justify-end gap-2 border-t border-line pt-4">
+              <Button size="sm" onClick={() => { setConfirmingId(null); setEditingId(s.id) }}>Edit</Button>
+              <Button size="sm" variant="danger" onClick={() => { setEditingId(null); setConfirmingId(s.id) }}>Delete</Button>
             </div>
           )}
           </>

@@ -1,14 +1,11 @@
-// Saves snapshots, assisted and manual alike. Writes the snapshot to mt_snapshots (options column
-// included, as before), then one row per option to mt_snapshot_options.
+// Saves snapshots, assisted and manual alike, through the mt_save_snapshot database function,
+// which writes the snapshot and its option rows in one transaction.
 
-import { supabase } from '../../../lib/supabase'
-import { deleteSnapshot, insertSnapshotOptions } from '../api'
+import { saveSnapshotRpc } from '../api'
 import { snapshotFormToRow, type SnapshotField, type SnapshotForm } from '../mapping'
 import type { ProductOption } from '../parse'
 import type { SnapshotInsert, SnapshotOptionInsert } from '../types'
 import { computeStatus, type CaptureStatus } from './viatorParser'
-
-const SNAPSHOTS = 'mt_snapshots'
 
 export type AssistedSnapshotInsert = Omit<SnapshotInsert, 'method' | 'status'> & {
   method: 'assisted'
@@ -56,32 +53,18 @@ export async function saveAssistedSnapshot(
 
 /**
  * The one path that creates a snapshot, used by both the import page and the manual form.
- * Inserts the mt_snapshots row, then its mt_snapshot_options rows. If the options cannot be
- * saved, the snapshot is deleted again so a retry does not leave a snapshot without option rows.
- * Returns the new snapshot id.
+ * Makes a single mt_save_snapshot call: p_snapshot is the row without its options, p_options
+ * is one row per option. The database saves both or neither. Returns the new snapshot id.
  */
 export async function saveSnapshotWithOptions<Row extends SnapshotInsert | AssistedSnapshotInsert>(
   row: Row,
   now: Date = new Date(),
 ): Promise<string> {
-  const { data, error } = await supabase.from(SNAPSHOTS).insert(row).select('id').single()
-  if (error) throw new Error(error.message)
-  const id = (data as { id: string }).id
-  try {
-    await insertSnapshotOptions(optionRows(id, row.options, now))
-  } catch (err) {
-    const reason = (err as Error).message
-    try {
-      await deleteSnapshot(id)
-    } catch (undoErr) {
-      throw new Error(
-        `Could not save the options (${reason}), and the snapshot could not be removed either ` +
-        `(${(undoErr as Error).message}). Snapshot ${id} exists without option rows.`,
-      )
-    }
-    throw new Error(`Could not save the options, so the snapshot was not saved: ${reason}`)
-  }
-  return id
+  const { options, ...snapshot } = row
+  // Every option needs a name; one without fails the whole save before anything is sent.
+  const unnamed = options.findIndex((o) => !o.name?.trim())
+  if (unnamed >= 0) throw new Error(`Option ${unnamed + 1} has no name, so nothing was saved.`)
+  return saveSnapshotRpc(snapshot, optionRows(options, now))
 }
 
 // ---------- options ----------
@@ -124,13 +107,15 @@ export function parsePricedFor(
   return { travelers, price_date: `${year}-${pad(month + 1)}-${pad(day)}` }
 }
 
+/** One option row for mt_save_snapshot. The database fills in snapshot_id. */
+export type OptionRow = Omit<SnapshotOptionInsert, 'snapshot_id'>
+
 /**
- * One mt_snapshot_options row per option, in order (sort_order 0, 1, 2, …), with travelers and
+ * One option row per option, in order (sort_order 0, 1, 2, …), with travelers and
  * price date read from the description.
  */
-export function optionRows(snapshotId: string, options: ProductOption[], now: Date = new Date()): SnapshotOptionInsert[] {
+export function optionRows(options: ProductOption[], now: Date = new Date()): OptionRow[] {
   return options.map((o, i) => ({
-    snapshot_id: snapshotId,
     sort_order: i,
     name: o.name,
     description: o.description,

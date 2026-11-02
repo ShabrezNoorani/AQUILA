@@ -4,6 +4,7 @@
 //   #/listings/<id>    → one listing with its snapshots
 //   #/listings/<id>/import → import a snapshot from a pasted page
 //   #/tags             → manage type and place tags
+//   #/ask              → ask AI about listings with chosen tags
 
 import { useEffect, useState } from 'react'
 
@@ -13,11 +14,13 @@ export type Route =
   | { name: 'listing'; id: string }
   | { name: 'import'; id: string }
   | { name: 'tags' }
+  | { name: 'ask' }
 
 export function parseHash(hash: string): Route {
   const path = hash.replace(/^#/, '').replace(/\/+$/, '')
   if (path === '/listings/new') return { name: 'new-listing' }
   if (path === '/tags') return { name: 'tags' }
+  if (path === '/ask') return { name: 'ask' }
   const imp = path.match(/^\/listings\/([^/]+)\/import$/)
   if (imp) return { name: 'import', id: decodeURIComponent(imp[1]) }
   const m = path.match(/^\/listings\/([^/]+)$/)
@@ -31,6 +34,7 @@ export const hrefFor = {
   listing: (id: string) => `#/listings/${encodeURIComponent(id)}`,
   importPage: (id: string) => `#/listings/${encodeURIComponent(id)}/import`,
   tags: () => '#/tags',
+  ask: () => '#/ask',
 }
 
 export function navigate(href: string) {

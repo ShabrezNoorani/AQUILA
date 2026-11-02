@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react'
 
-export const inputClass = 'w-full rounded bg-slate-800 px-3 py-2'
+export const inputClass = 'w-full rounded-card border border-line bg-surface px-3 py-2 text-ink'
 
 type FieldProps = {
   id: string
@@ -16,7 +16,7 @@ export function Field({ id, label, error, children }: FieldProps) {
     <div className="space-y-1">
       <label htmlFor={id} className="block text-sm font-medium">{label}</label>
       {children}
-      {error && <p role="alert" id={`${id}-error`} className="text-sm text-red-400">{error}</p>}
+      {error && <p role="alert" id={`${id}-error`} className="text-sm text-negative-deep">{error}</p>}
     </div>
   )
 }

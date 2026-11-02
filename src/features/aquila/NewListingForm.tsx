@@ -1,12 +1,17 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { createListingWithTags, fetchTags } from './api'
-import { Field, TextField, inputClass } from './fields'
 import { emptyListingForm, listingFormToRow, type ListingForm } from './mapping'
 import { listingTagsError } from './tags/tagMapping'
 import TagPicker from './tags/TagPicker'
-import { LISTING_SOURCES, type ListingSource, type Tag } from './types'
+import { LISTING_SOURCES, SOURCE_LABELS, type ListingSource, type Tag } from './types'
+import { Button, Card, Field, FormError, Page, TextField, inputClass } from './ui'
 
 type Errors = Partial<Record<keyof ListingForm, string>>
+
+/** One half of the Own / Competitor switch. The radio inside stays reachable by keyboard. */
+const segment = (on: boolean) =>
+  `cursor-pointer rounded-md px-4 py-1.5 text-sm font-medium transition-colors has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent ${
+    on ? 'bg-surface text-ink shadow-sm shadow-ink/5' : 'text-ink-3 hover:text-ink'}`
 
 export default function NewListingForm({ onCreated }: { onCreated: (id: string) => void }) {
   const [form, setForm] = useState<ListingForm>(emptyListingForm)
@@ -52,58 +57,66 @@ export default function NewListingForm({ onCreated }: { onCreated: (id: string) 
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="max-w-lg space-y-4">
-      <h1 className="text-2xl font-bold">New listing</h1>
+    <Page title="New listing" narrow>
+      <form onSubmit={handleSubmit} noValidate className="space-y-6">
+        <Card title="Details" description="What it is and where it’s listed." className="space-y-5">
+          <TextField id="listing-name" label="Name *" value={form.name}
+            onChange={(v) => set('name', v)} error={errors.name} />
 
-      <TextField id="listing-name" label="Name *" value={form.name}
-        onChange={(v) => set('name', v)} error={errors.name} />
+          <fieldset className="space-y-1.5">
+            <legend className="mb-1.5 text-sm font-medium text-ink">Whose listing?</legend>
+            <div className="inline-flex rounded-card border border-line bg-paper p-1">
+              <label className={segment(form.is_own)}>
+                <input type="radio" name="is_own" className="sr-only" checked={form.is_own}
+                  onChange={() => set('is_own', true)} />
+                Own
+              </label>
+              <label className={segment(!form.is_own)}>
+                <input type="radio" name="is_own" className="sr-only" checked={!form.is_own}
+                  onChange={() => set('is_own', false)} />
+                Competitor
+              </label>
+            </div>
+          </fieldset>
 
-      <fieldset className="space-y-1">
-        <legend className="text-sm font-medium">Whose listing?</legend>
-        <div className="flex gap-6">
-          <label className="flex items-center gap-2">
-            <input type="radio" name="is_own" checked={form.is_own}
-              onChange={() => set('is_own', true)} />
-            Own
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="radio" name="is_own" checked={!form.is_own}
-              onChange={() => set('is_own', false)} />
-            Competitor
-          </label>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field id="listing-source" label="Source" error={errors.source}>
+              <select id="listing-source" value={form.source} className={inputClass}
+                onChange={(e) => set('source', e.target.value as ListingSource)}>
+                {LISTING_SOURCES.map((s) => <option key={s} value={s}>{SOURCE_LABELS[s]}</option>)}
+              </select>
+            </Field>
+
+            <TextField id="listing-competitor-name" label="Competitor name" value={form.competitor_name}
+              onChange={(v) => set('competitor_name', v)} error={errors.competitor_name} />
+          </div>
+
+          <TextField id="listing-url" label="URL" value={form.url} placeholder="https://…"
+            help="The public product page, starting with http:// or https://."
+            onChange={(v) => set('url', v)} error={errors.url} />
+        </Card>
+
+        <Card title="Tags" description="Exactly one type and at least one place.">
+          {tagLoadError && <FormError>Could not load tags: {tagLoadError}</FormError>}
+          {!tagLoadError && !tags && <p className="text-sm text-ink-3">Loading tags…</p>}
+          {tags && (
+            <TagPicker idPrefix="new-listing" tags={tags} selected={tagIds} error={tagError}
+              onChange={(ids) => {
+                setTagIds(ids)
+                setTagError(null)
+              }} />
+          )}
+          {!tags && tagError && <p role="alert" className="mt-2 text-sm text-negative-deep">{tagError}</p>}
+        </Card>
+
+        {saveError && <FormError>Could not save: {saveError}</FormError>}
+
+        <div className="flex justify-end">
+          <Button type="submit" variant="primary" disabled={busy}>
+            {busy ? 'Saving…' : 'Create listing'}
+          </Button>
         </div>
-      </fieldset>
-
-      <Field id="listing-source" label="Source" error={errors.source}>
-        <select id="listing-source" value={form.source} className={inputClass}
-          onChange={(e) => set('source', e.target.value as ListingSource)}>
-          {LISTING_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-      </Field>
-
-      <TextField id="listing-url" label="URL" value={form.url} placeholder="https://…"
-        onChange={(v) => set('url', v)} error={errors.url} />
-
-      <TextField id="listing-competitor-name" label="Competitor name" value={form.competitor_name}
-        onChange={(v) => set('competitor_name', v)} error={errors.competitor_name} />
-
-      {tagLoadError && <p role="alert" className="text-red-400">Could not load tags: {tagLoadError}</p>}
-      {!tagLoadError && !tags && <p className="text-sm">Loading tags…</p>}
-      {tags && (
-        <TagPicker idPrefix="new-listing" tags={tags} selected={tagIds} error={tagError}
-          onChange={(ids) => {
-            setTagIds(ids)
-            setTagError(null)
-          }} />
-      )}
-      {!tags && tagError && <p role="alert" className="text-red-400">{tagError}</p>}
-
-      {saveError && <p role="alert" className="text-red-400">Could not save: {saveError}</p>}
-
-      <button type="submit" disabled={busy}
-        className="rounded bg-white px-3 py-2 font-semibold text-slate-900 disabled:opacity-50">
-        {busy ? 'Saving…' : 'Create listing'}
-      </button>
-    </form>
+      </form>
+    </Page>
   )
 }

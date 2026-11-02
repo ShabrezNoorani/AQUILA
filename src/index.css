@@ -1,1 +1,43 @@
 @import "tailwindcss";
+
+/*
+ * AQUILA theme, matching AURELIA's light look. These are the only colours, font and card radius
+ * used in the app: every screen refers to these tokens, never to raw colours.
+ */
+@theme {
+  --color-paper: #F7F6F3;        /* page background */
+  --color-surface: #FFFFFF;      /* cards and sidebar */
+  --color-line: #E5E1D8;         /* borders */
+  --color-accent: #B45309;       /* primary buttons, links, active navigation, key numbers */
+  --color-accent-deep: #92400E;  /* hover and pressed states */
+  --color-ink: #1C1917;          /* main text */
+  --color-ink-2: #44403C;        /* secondary text */
+  --color-ink-3: #78716C;        /* muted text */
+  --color-positive: #16A34A;
+  --color-positive-deep: #15803D;
+  --color-negative: #DC2626;
+  --color-negative-deep: #B91C1C;
+
+  --font-sans: Inter, system-ui, sans-serif;
+
+  --radius-card: 0.75rem;
+}
+
+@layer base {
+  html,
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  a {
+    color: inherit;
+  }
+}
