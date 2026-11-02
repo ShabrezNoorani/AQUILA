@@ -5,6 +5,7 @@
 //   #/listings/<id>/import → import a snapshot from a pasted page
 //   #/tags             → manage type and place tags
 //   #/ask              → ask AI about listings with chosen tags
+//   #/help             → the AQUILA manual
 
 import { useEffect, useState } from 'react'
 
@@ -15,12 +16,14 @@ export type Route =
   | { name: 'import'; id: string }
   | { name: 'tags' }
   | { name: 'ask' }
+  | { name: 'help' }
 
 export function parseHash(hash: string): Route {
   const path = hash.replace(/^#/, '').replace(/\/+$/, '')
   if (path === '/listings/new') return { name: 'new-listing' }
   if (path === '/tags') return { name: 'tags' }
   if (path === '/ask') return { name: 'ask' }
+  if (path === '/help') return { name: 'help' }
   const imp = path.match(/^\/listings\/([^/]+)\/import$/)
   if (imp) return { name: 'import', id: decodeURIComponent(imp[1]) }
   const m = path.match(/^\/listings\/([^/]+)$/)
@@ -35,6 +38,7 @@ export const hrefFor = {
   importPage: (id: string) => `#/listings/${encodeURIComponent(id)}/import`,
   tags: () => '#/tags',
   ask: () => '#/ask',
+  help: () => '#/help',
 }
 
 export function navigate(href: string) {

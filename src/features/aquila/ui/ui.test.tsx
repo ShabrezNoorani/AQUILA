@@ -25,6 +25,21 @@ describe('AppShell', () => {
     expect(nav.querySelector('[aria-disabled]')).toBeNull()
   })
 
+  it('lists Help after Ask AI, linking to #/help', () => {
+    render(<AppShell active="listings"><p /></AppShell>)
+    const nav = screen.getByRole('navigation', { name: 'Main' })
+    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Listings', 'Tags', 'Ask AI', 'Help'])
+    const help = within(nav).getByRole('link', { name: 'Help' })
+    expect(help.getAttribute('href')).toBe('#/help')
+    expect(help.className).toBe(within(nav).getByRole('link', { name: 'Tags' }).className)
+  })
+
+  it('marks Help as the current page when active is help', () => {
+    render(<AppShell active="help"><p /></AppShell>)
+    const nav = screen.getByRole('navigation', { name: 'Main' })
+    expect(within(nav).getByRole('link', { name: 'Help' }).getAttribute('aria-current')).toBe('page')
+  })
+
   it('marks Ask AI as the current page when active is ask', () => {
     render(<AppShell active="ask"><p /></AppShell>)
     const nav = screen.getByRole('navigation', { name: 'Main' })

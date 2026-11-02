@@ -5,6 +5,7 @@ import ListingsPage from './features/aquila/ListingsPage'
 import NewListingForm from './features/aquila/NewListingForm'
 import TagsPage from './features/aquila/tags/TagsPage'
 import AskPage from './features/aquila/ask/AskPage'
+import HelpPage from './features/aquila/help/HelpPage'
 import { hrefFor, navigate, useHashRoute } from './features/aquila/router'
 import { AppShell } from './features/aquila/ui'
 
@@ -22,6 +23,8 @@ function Routes() {
       return <TagsPage />
     case 'ask':
       return <AskPage />
+    case 'help':
+      return <HelpPage />
     default:
       return <ListingsPage />
   }
