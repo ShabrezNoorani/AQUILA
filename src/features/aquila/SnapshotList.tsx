@@ -1,6 +1,17 @@
 import { useEffect, useState } from 'react'
-import { fetchSnapshots } from './api'
-import type { Snapshot } from './types'
+import { deleteSnapshot, fetchSnapshots, updateSnapshot } from './api'
+import { snapshotRowToForm } from './mapping'
+import ConfirmDialog from './reviews/ConfirmDialog'
+import SnapshotForm from './SnapshotForm'
+import type { Snapshot, SnapshotInsert, SnapshotUpdate } from './types'
+
+/** The editable part of a mapped row: listing_id and method are never changed by an edit. */
+function toUpdate(row: SnapshotInsert): SnapshotUpdate {
+  const patch: Partial<SnapshotInsert> = { ...row }
+  delete patch.listing_id
+  delete patch.method
+  return patch as SnapshotUpdate
+}
 
 function formatDate(iso?: string) {
   if (!iso) return 'Unknown date'
@@ -32,6 +43,10 @@ function Text({ label, value }: { label: string; value?: string | number | null 
 export default function SnapshotList({ listingId, refreshKey }: { listingId: string; refreshKey: number }) {
   const [snapshots, setSnapshots] = useState<Snapshot[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const reload = () => setReloadKey((k) => k + 1)
 
   useEffect(() => {
     let live = true
@@ -45,7 +60,7 @@ export default function SnapshotList({ listingId, refreshKey }: { listingId: str
     return () => {
       live = false
     }
-  }, [listingId, refreshKey])
+  }, [listingId, refreshKey, reloadKey])
 
   return (
     <section className="space-y-3">
@@ -55,6 +70,21 @@ export default function SnapshotList({ listingId, refreshKey }: { listingId: str
       {snapshots && snapshots.length === 0 && <p className="text-slate-400">No snapshots yet.</p>}
       {snapshots?.map((s) => (
         <article key={s.id} className="rounded border border-slate-700 p-4 space-y-2">
+          {editingId === s.id ? (
+            <div className="space-y-2">
+              <SnapshotForm listingId={listingId} initial={snapshotRowToForm(s)}
+                onSubmitRow={(row) => updateSnapshot(s.id, toUpdate(row))}
+                onSaved={() => {
+                  setEditingId(null)
+                  reload()
+                }} />
+              <button type="button" onClick={() => setEditingId(null)}
+                className="rounded border border-slate-500 px-3 py-1 text-sm">
+                Cancel editing
+              </button>
+            </div>
+          ) : (
+          <>
           <header>
             <h3 className="font-semibold">{s.title || '(untitled)'}</h3>
             <p className="text-xs text-slate-400">
@@ -81,6 +111,30 @@ export default function SnapshotList({ listingId, refreshKey }: { listingId: str
               )}
             />
           </dl>
+          {confirmingId === s.id ? (
+            <ConfirmDialog label="Confirm delete snapshot"
+              message={`Delete the snapshot “${s.title || '(untitled)'}”? This can’t be undone.`}
+              confirmLabel="Yes, delete snapshot"
+              onCancel={() => setConfirmingId(null)}
+              onConfirm={async () => {
+                await deleteSnapshot(s.id)
+                setConfirmingId(null)
+                reload()
+              }} />
+          ) : (
+            <div className="flex gap-2">
+              <button type="button" onClick={() => { setConfirmingId(null); setEditingId(s.id) }}
+                className="rounded border border-slate-500 px-3 py-1 text-sm">
+                Edit
+              </button>
+              <button type="button" onClick={() => { setEditingId(null); setConfirmingId(s.id) }}
+                className="rounded border border-red-500 px-3 py-1 text-sm text-red-400">
+                Delete
+              </button>
+            </div>
+          )}
+          </>
+          )}
         </article>
       ))}
     </section>

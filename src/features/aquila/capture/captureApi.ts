@@ -1,8 +1,11 @@
-// Saves an assisted capture. Writes only to mt_snapshots.
+// Saves snapshots, assisted and manual alike. Writes the snapshot to mt_snapshots (options column
+// included, as before), then one row per option to mt_snapshot_options.
 
 import { supabase } from '../../../lib/supabase'
+import { deleteSnapshot, insertSnapshotOptions } from '../api'
 import { snapshotFormToRow, type SnapshotField, type SnapshotForm } from '../mapping'
-import type { SnapshotInsert } from '../types'
+import type { ProductOption } from '../parse'
+import type { SnapshotInsert, SnapshotOptionInsert } from '../types'
 import { computeStatus, type CaptureStatus } from './viatorParser'
 
 const SNAPSHOTS = 'mt_snapshots'
@@ -43,10 +46,95 @@ export async function saveAssistedSnapshot(
   form: SnapshotForm,
   rawHtml: string,
   rawText: string,
+  now: Date = new Date(),
 ): Promise<SaveResult> {
   const built = assistedRow(listingId, form, rawHtml, rawText)
   if (!built.ok) return built
-  const { data, error } = await supabase.from(SNAPSHOTS).insert(built.row).select('id').single()
+  const id = await saveSnapshotWithOptions(built.row, now)
+  return { ok: true, id }
+}
+
+/**
+ * The one path that creates a snapshot, used by both the import page and the manual form.
+ * Inserts the mt_snapshots row, then its mt_snapshot_options rows. If the options cannot be
+ * saved, the snapshot is deleted again so a retry does not leave a snapshot without option rows.
+ * Returns the new snapshot id.
+ */
+export async function saveSnapshotWithOptions<Row extends SnapshotInsert | AssistedSnapshotInsert>(
+  row: Row,
+  now: Date = new Date(),
+): Promise<string> {
+  const { data, error } = await supabase.from(SNAPSHOTS).insert(row).select('id').single()
   if (error) throw new Error(error.message)
-  return { ok: true, id: (data as { id: string }).id }
+  const id = (data as { id: string }).id
+  try {
+    await insertSnapshotOptions(optionRows(id, row.options, now))
+  } catch (err) {
+    const reason = (err as Error).message
+    try {
+      await deleteSnapshot(id)
+    } catch (undoErr) {
+      throw new Error(
+        `Could not save the options (${reason}), and the snapshot could not be removed either ` +
+        `(${(undoErr as Error).message}). Snapshot ${id} exists without option rows.`,
+      )
+    }
+    throw new Error(`Could not save the options, so the snapshot was not saved: ${reason}`)
+  }
+  return id
+}
+
+// ---------- options ----------
+
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/**
+ * Reads "Priced for N travelers, DATE" from an option description.
+ * DATE is like "Nov 25", "November 25" or "Nov 25, 2026". Without a year, the next
+ * Nov 25 on or after `now` is used, since listed prices are for upcoming dates.
+ * Anything missing or unreadable comes back as null.
+ */
+export function parsePricedFor(
+  description: string | null | undefined,
+  now: Date = new Date(),
+): { travelers: number | null; price_date: string | null } {
+  const empty = { travelers: null, price_date: null }
+  if (!description) return empty
+  const m = description.match(/priced\s+for\s+(\d+)\s+travell?ers?\b(?:\s*,\s*([A-Za-z]+)\.?\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?)?/i)
+  if (!m) return empty
+  const travelers = Number(m[1])
+  if (!m[2]) return { travelers, price_date: null }
+  const month = MONTHS.indexOf(m[2].slice(0, 3).toLowerCase())
+  const day = Number(m[3])
+  if (month < 0) return { travelers, price_date: null }
+  const valid = (y: number) => {
+    const d = new Date(Date.UTC(y, month, day))
+    return d.getUTCMonth() === month && d.getUTCDate() === day
+  }
+  let year: number
+  if (m[4]) {
+    year = Number(m[4])
+  } else {
+    year = now.getFullYear()
+    const today = Date.UTC(year, now.getMonth(), now.getDate())
+    if (!valid(year) || Date.UTC(year, month, day) < today) year += 1
+  }
+  if (!valid(year)) return { travelers, price_date: null }
+  return { travelers, price_date: `${year}-${pad(month + 1)}-${pad(day)}` }
+}
+
+/**
+ * One mt_snapshot_options row per option, in order (sort_order 0, 1, 2, …), with travelers and
+ * price date read from the description.
+ */
+export function optionRows(snapshotId: string, options: ProductOption[], now: Date = new Date()): SnapshotOptionInsert[] {
+  return options.map((o, i) => ({
+    snapshot_id: snapshotId,
+    sort_order: i,
+    name: o.name,
+    description: o.description,
+    price_per_person: o.price,
+    ...parsePricedFor(o.description, now),
+  }))
 }

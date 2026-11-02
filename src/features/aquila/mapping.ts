@@ -7,7 +7,7 @@ import {
   parseRating,
   parseReviewCount,
 } from './parse'
-import { LISTING_SOURCES, type ListingInsert, type ListingSource, type SnapshotInsert } from './types'
+import { LISTING_SOURCES, type ListingInsert, type ListingSource, type Snapshot, type SnapshotInsert } from './types'
 
 export type Mapped<Row, Field extends string> =
   | { ok: true; row: Row }
@@ -149,5 +149,38 @@ export function snapshotFormToRow(
       review_count: reviewCount.value,
       urgency_text: textOrNull(form.urgency_text),
     },
+  }
+}
+
+/**
+ * Turns a saved snapshot back into form text, so it can be edited in the snapshot form.
+ * snapshotFormToRow(listingId, snapshotRowToForm(row)) gives back the same values.
+ */
+export function snapshotRowToForm(row: Snapshot): SnapshotForm {
+  const text = (v: string | null | undefined) => v ?? ''
+  const list = (v: string[] | null | undefined, sep: string) => (v ?? []).join(sep)
+  const num = (v: number | null | undefined) => (v == null ? '' : String(v))
+  return {
+    title: text(row.title),
+    overview: text(row.overview),
+    duration: text(row.duration),
+    languages: list(row.languages, ', '),
+    group_type: text(row.group_type),
+    highlights: list(row.highlights, '\n'),
+    inclusions: text(row.inclusions),
+    exclusions: text(row.exclusions),
+    why_this: text(row.why_this),
+    itinerary: list(row.itinerary, '\n'),
+    options: (row.options ?? [])
+      .map((o) => {
+        const name = o.name.replace(/\|/g, '/')
+        const description = (o.description ?? '').replace(/\|/g, '/')
+        if (o.price == null && !description) return name
+        return `${name} | ${description} | ${o.price ?? ''}`
+      })
+      .join('\n'),
+    rating: num(row.rating),
+    review_count: num(row.review_count),
+    urgency_text: text(row.urgency_text),
   }
 }

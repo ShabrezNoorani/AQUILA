@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react'
-import { createSnapshot } from './api'
+import { saveSnapshotWithOptions } from './capture/captureApi'
 import { TextField } from './fields'
 import { emptySnapshotForm, snapshotFormToRow, type SnapshotField, type SnapshotForm as Form } from './mapping'
+import type { SnapshotInsert } from './types'
 
 type Errors = Partial<Record<SnapshotField, string>>
 
@@ -28,8 +29,17 @@ const FIELDS: FieldDef[] = [
   { key: 'urgency_text', label: 'Urgency text', placeholder: 'e.g. Likely to sell out' },
 ]
 
-export default function SnapshotForm({ listingId, onSaved }: { listingId: string; onSaved: () => void }) {
-  const [form, setForm] = useState<Form>(emptySnapshotForm)
+type Props = {
+  listingId: string
+  onSaved: () => void
+  /** Starting values, for editing an existing snapshot. Without it the form starts empty. */
+  initial?: Form
+  /** Saves the mapped row. Without it the form creates a new snapshot, as before. */
+  onSubmitRow?: (row: SnapshotInsert) => Promise<unknown>
+}
+
+export default function SnapshotForm({ listingId, onSaved, initial, onSubmitRow = saveSnapshotWithOptions }: Props) {
+  const [form, setForm] = useState<Form>(() => initial ?? emptySnapshotForm())
   const [errors, setErrors] = useState<Errors>({})
   const [saveError, setSaveError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -45,8 +55,8 @@ export default function SnapshotForm({ listingId, onSaved }: { listingId: string
     setErrors({})
     setBusy(true)
     try {
-      await createSnapshot(mapped.row)
-      setForm(emptySnapshotForm())
+      await onSubmitRow(mapped.row)
+      setForm(initial ?? emptySnapshotForm())
       onSaved()
     } catch (err) {
       setSaveError((err as Error).message)
@@ -57,10 +67,10 @@ export default function SnapshotForm({ listingId, onSaved }: { listingId: string
 
   return (
     <form onSubmit={handleSubmit} noValidate className="space-y-4">
-      <h2 className="text-xl font-semibold">Add snapshot (manual)</h2>
+      <h2 className="text-xl font-semibold">{initial ? 'Edit snapshot' : 'Add snapshot (manual)'}</h2>
       <div className="grid gap-4 md:grid-cols-2">
         {FIELDS.map((f) => (
-          <TextField key={f.key} id={`snapshot-${f.key}`} label={f.label} value={form[f.key]}
+          <TextField key={f.key} id={`${initial ? 'edit-snapshot' : 'snapshot'}-${f.key}`} label={f.label} value={form[f.key]}
             multiline={f.multiline} placeholder={f.placeholder} error={errors[f.key]}
             onChange={(v) => setForm((prev) => ({ ...prev, [f.key]: v }))} />
         ))}

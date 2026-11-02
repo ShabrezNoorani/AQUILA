@@ -9,6 +9,7 @@ vi.mock('../../lib/supabase', () => ({ supabase: { from: vi.fn() } }))
 
 let queries: Query[]
 let snapshotCount: number
+let reviewCount: number
 let deleteResult: Result
 
 const listing = { id: 'L1', name: 'Rival Safari', is_own: false, source: 'viator', url: null, competitor_name: null, active: true }
@@ -21,11 +22,13 @@ function respond(q: Query): Result {
   if (q.table === 'mt_listings' && isDelete(q)) return deleteResult
   if (q.table === 'mt_listings') return { data: listing, error: null }
   if (q.table === 'mt_snapshots' && isCount(q)) return { data: null, error: null, count: snapshotCount }
+  if (q.table === 'mt_reviews' && isCount(q)) return { data: null, error: null, count: reviewCount }
   return { data: [], error: null }
 }
 
 beforeEach(() => {
   snapshotCount = 3
+  reviewCount = 2
   deleteResult = { data: [{ id: 'L1' }], error: null }
   const fake = createFakeSupabase((q) => respond(q))
   queries = fake.queries
@@ -76,17 +79,32 @@ describe('ListingDetailPage delete', () => {
     return screen.findByRole('alertdialog', { name: /confirm delete/i })
   }
 
-  it('asks first, saying how many snapshots will also be deleted', async () => {
+  it('asks first, saying how many snapshots and reviews will also be deleted', async () => {
     const dialog = await openConfirm()
     expect(dialog.textContent).toMatch(/Rival Safari/)
-    expect(dialog.textContent).toMatch(/also delete 3 snapshots/)
+    expect(dialog.textContent).toMatch(/also delete 3 snapshots and 2 reviews\./)
     expect(deletes()).toHaveLength(0)
   })
 
-  it('uses the singular for one snapshot', async () => {
+  it('counts reviews in mt_reviews for this listing', async () => {
+    await openConfirm()
+    const counts = queries.filter(isCount)
+    expect(counts.map((q) => q.table).sort()).toEqual(['mt_reviews', 'mt_snapshots'])
+    for (const q of counts) expect(callsOf(q, 'eq')).toEqual([['listing_id', 'L1']])
+  })
+
+  it('uses the singular for one snapshot and one review', async () => {
     snapshotCount = 1
+    reviewCount = 1
     const dialog = await openConfirm()
-    expect(dialog.textContent).toMatch(/also delete 1 snapshot\./)
+    expect(dialog.textContent).toMatch(/also delete 1 snapshot and 1 review\./)
+  })
+
+  it('still deletes with a single delete on mt_listings, never on mt_reviews or mt_snapshots', async () => {
+    const dialog = await openConfirm()
+    fireEvent.click(within(dialog).getByRole('button', { name: /yes, delete listing/i }))
+    await waitFor(() => expect(window.location.hash).toBe('#/'))
+    expect(deletes().map((q) => q.table)).toEqual(['mt_listings'])
   })
 
   it('deletes and goes back to the listings list after confirming', async () => {

@@ -3,6 +3,7 @@ import ImportPage from './features/aquila/capture/ImportPage'
 import ListingDetailPage from './features/aquila/ListingDetailPage'
 import ListingsPage from './features/aquila/ListingsPage'
 import NewListingForm from './features/aquila/NewListingForm'
+import TagsPage from './features/aquila/tags/TagsPage'
 import { hrefFor, navigate, useHashRoute } from './features/aquila/router'
 
 function Routes() {
@@ -15,6 +16,8 @@ function Routes() {
     case 'import':
       return <ImportPage key={route.id} listingId={route.id}
         onSaved={() => navigate(hrefFor.listing(route.id))} />
+    case 'tags':
+      return <TagsPage />
     default:
       return <ListingsPage />
   }

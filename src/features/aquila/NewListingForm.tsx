@@ -1,8 +1,10 @@
-import { useState, type FormEvent } from 'react'
-import { createListing } from './api'
+import { useEffect, useState, type FormEvent } from 'react'
+import { createListingWithTags, fetchTags } from './api'
 import { Field, TextField, inputClass } from './fields'
 import { emptyListingForm, listingFormToRow, type ListingForm } from './mapping'
-import { LISTING_SOURCES, type ListingSource } from './types'
+import { listingTagsError } from './tags/tagMapping'
+import TagPicker from './tags/TagPicker'
+import { LISTING_SOURCES, type ListingSource, type Tag } from './types'
 
 type Errors = Partial<Record<keyof ListingForm, string>>
 
@@ -11,6 +13,20 @@ export default function NewListingForm({ onCreated }: { onCreated: (id: string) 
   const [errors, setErrors] = useState<Errors>({})
   const [saveError, setSaveError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [tags, setTags] = useState<Tag[] | null>(null)
+  const [tagLoadError, setTagLoadError] = useState<string | null>(null)
+  const [tagIds, setTagIds] = useState<string[]>([])
+  const [tagError, setTagError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let live = true
+    fetchTags()
+      .then((rows) => live && setTags(rows))
+      .catch((e: Error) => live && setTagLoadError(e.message))
+    return () => {
+      live = false
+    }
+  }, [])
 
   const set = <K extends keyof ListingForm>(key: K, value: ListingForm[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
@@ -19,14 +35,14 @@ export default function NewListingForm({ onCreated }: { onCreated: (id: string) 
     e.preventDefault()
     setSaveError(null)
     const mapped = listingFormToRow(form)
-    if (!mapped.ok) {
-      setErrors(mapped.errors)
-      return
-    }
-    setErrors({})
+    // Exactly one type tag and at least one place tag, or nothing is saved.
+    const tagProblem = tags ? listingTagsError(tagIds, tags) : 'Tags have not loaded, so the listing cannot be saved yet'
+    setErrors(mapped.ok ? {} : mapped.errors)
+    setTagError(tagProblem)
+    if (!mapped.ok || tagProblem) return
     setBusy(true)
     try {
-      const created = await createListing(mapped.row)
+      const created = await createListingWithTags(mapped.row, tagIds)
       onCreated(created.id)
     } catch (err) {
       setSaveError((err as Error).message)
@@ -70,6 +86,17 @@ export default function NewListingForm({ onCreated }: { onCreated: (id: string) 
 
       <TextField id="listing-competitor-name" label="Competitor name" value={form.competitor_name}
         onChange={(v) => set('competitor_name', v)} error={errors.competitor_name} />
+
+      {tagLoadError && <p role="alert" className="text-red-400">Could not load tags: {tagLoadError}</p>}
+      {!tagLoadError && !tags && <p className="text-sm">Loading tags…</p>}
+      {tags && (
+        <TagPicker idPrefix="new-listing" tags={tags} selected={tagIds} error={tagError}
+          onChange={(ids) => {
+            setTagIds(ids)
+            setTagError(null)
+          }} />
+      )}
+      {!tags && tagError && <p role="alert" className="text-red-400">{tagError}</p>}
 
       {saveError && <p role="alert" className="text-red-400">Could not save: {saveError}</p>}
 

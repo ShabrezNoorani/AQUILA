@@ -51,9 +51,9 @@ describe('ListingsPage', () => {
   })
 
   it('shows a load error', async () => {
-    respond = () => ({ data: null, error: { message: 'boom' } })
+    respond = (q) => (q.table === 'mt_listings' ? { data: null, error: { message: 'boom' } } : { data: [], error: null })
     render(<ListingsPage />)
-    expect(await screen.findByText(/boom/)).toBeTruthy()
+    expect(await screen.findByText(/could not load listings: boom/i)).toBeTruthy()
   })
 })
 
@@ -66,9 +66,16 @@ describe('NewListingForm', () => {
   })
 
   it('inserts the mapped row and reports the new listing', async () => {
-    respond = () => ({ data: { id: 'new-1' }, error: null })
+    respond = (q) => {
+      if (q.table === 'mt_tags') {
+        return { data: [{ id: 'T1', name: 'Tour', kind: 'type' }, { id: 'P1', name: 'Dubai', kind: 'place' }], error: null }
+      }
+      return { data: { id: 'new-1' }, error: null }
+    }
     const onCreated = vi.fn()
     render(<NewListingForm onCreated={onCreated} />)
+    fireEvent.click(await screen.findByLabelText('Tour'))
+    fireEvent.click(screen.getByLabelText('Dubai'))
 
     fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'Rival Safari' } })
     fireEvent.click(screen.getByLabelText(/competitor/i, { selector: 'input[type=radio]' }))
@@ -78,8 +85,9 @@ describe('NewListingForm', () => {
     fireEvent.click(screen.getByRole('button', { name: /create listing/i }))
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-1'))
-    const [q] = inserts()
+    const [q, links] = inserts()
     expect(q.table).toBe('mt_listings')
+    expect(links.table).toBe('mt_listing_tags')
     expect(callsOf(q, 'insert')[0][0]).toEqual({
       name: 'Rival Safari',
       is_own: false,
@@ -142,6 +150,37 @@ describe('SnapshotForm', () => {
 
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
     expect(callsOf(inserts()[0], 'insert')[0][0]).toMatchObject({ method: 'manual', status: 'complete' })
+  })
+
+  it('also saves each option to mt_snapshot_options, in order, through the shared save path', async () => {
+    respond = () => ({ data: { id: 's7' }, error: null })
+    const onSaved = vi.fn()
+    render(<SnapshotForm listingId="L1" onSaved={onSaved} />)
+    fireEvent.change(screen.getByLabelText(/options/i), {
+      target: { value: 'Shared | Priced for 2 travelers, Dec 5, 2026 | 150\nPrivate |  | 300' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /save snapshot/i }))
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    expect(inserts().map((q) => q.table)).toEqual(['mt_snapshots', 'mt_snapshot_options'])
+    expect(callsOf(inserts()[1], 'insert')[0][0]).toEqual([
+      { snapshot_id: 's7', sort_order: 0, name: 'Shared', description: 'Priced for 2 travelers, Dec 5, 2026', price_per_person: 150, travelers: 2, price_date: '2026-12-05' },
+      { snapshot_id: 's7', sort_order: 1, name: 'Private', description: null, price_per_person: 300, travelers: null, price_date: null },
+    ])
+  })
+
+  it('shows the error and does not report success when the options cannot be saved', async () => {
+    respond = (q) => {
+      if (q.table === 'mt_snapshot_options') return { data: null, error: { message: 'options denied' } }
+      if (callsOf(q, 'delete').length) return { data: [{ id: 's8' }], error: null }
+      return { data: { id: 's8' }, error: null }
+    }
+    const onSaved = vi.fn()
+    render(<SnapshotForm listingId="L1" onSaved={onSaved} />)
+    fireEvent.change(screen.getByLabelText(/options/i), { target: { value: 'Shared | Group | 150' } })
+    fireEvent.click(screen.getByRole('button', { name: /save snapshot/i }))
+    expect(await screen.findByText(/snapshot was not saved: options denied/i)).toBeTruthy()
+    expect(onSaved).not.toHaveBeenCalled()
   })
 
   it('shows a parse error for an invalid price and does not insert', async () => {
