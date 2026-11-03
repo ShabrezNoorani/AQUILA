@@ -1,17 +1,26 @@
 import { useEffect, useState } from 'react'
-import { deleteSnapshot, fetchSnapshots, updateSnapshot } from './api'
+import { deleteSnapshot, fetchOptionsForSnapshots, fetchSnapshots, replaceSnapshotOptions, updateSnapshot } from './api'
+import { optionRows } from './capture/captureApi'
 import { snapshotRowToForm } from './mapping'
 import SnapshotForm from './SnapshotForm'
-import type { Snapshot, SnapshotInsert, SnapshotUpdate } from './types'
+import type { Snapshot, SnapshotInsert, SnapshotOption, SnapshotUpdate } from './types'
 import { Badge, Button, ConfirmDialog, EmptyState, FormError } from './ui'
 
-/** The editable part of a mapped row: listing_id and method are never changed by an edit. */
-function toUpdate(row: SnapshotInsert): SnapshotUpdate {
-  const patch: Partial<SnapshotInsert> = { ...row }
-  delete patch.listing_id
-  delete patch.method
-  return patch as SnapshotUpdate
+/**
+ * Saves an edited snapshot: its own columns first (never listing_id, method or the old
+ * options column), then its rows in mt_snapshot_options are replaced.
+ */
+async function saveEdit(id: string, row: SnapshotInsert): Promise<void> {
+  const { listing_id: _listing, method: _method, options, ...patch } = row
+  const unnamed = options.findIndex((o) => !o.name?.trim())
+  if (unnamed >= 0) throw new Error(`Option ${unnamed + 1} has no name, so nothing was saved.`)
+  await updateSnapshot(id, patch satisfies Omit<SnapshotUpdate, 'options'>)
+  await replaceSnapshotOptions(id, optionRows(options))
 }
+
+/** One option row as a line: name — description — price per person. */
+const optionLine = (o: SnapshotOption) =>
+  [o.name, o.description, o.price_per_person != null ? String(o.price_per_person) : null].filter(Boolean).join(' — ')
 
 function formatDate(iso?: string) {
   if (!iso) return 'Unknown date'
@@ -42,6 +51,7 @@ function Text({ label, value }: { label: string; value?: string | number | null 
 /** Snapshots for one listing, newest first. Bump refreshKey to reload. */
 export default function SnapshotList({ listingId, refreshKey }: { listingId: string; refreshKey: number }) {
   const [snapshots, setSnapshots] = useState<Snapshot[] | null>(null)
+  const [options, setOptions] = useState<Record<string, SnapshotOption[]>>({})
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -50,10 +60,14 @@ export default function SnapshotList({ listingId, refreshKey }: { listingId: str
 
   useEffect(() => {
     let live = true
+    // Options come only from mt_snapshot_options. If they can't be read, the whole list
+    // shows the error, so an edit can never start from (and save) a wrongly empty list.
     fetchSnapshots(listingId)
-      .then((rows) => {
+      .then(async (rows) => {
+        const byId = await fetchOptionsForSnapshots(rows.map((r) => r.id))
         if (!live) return
         setError(null)
+        setOptions(byId)
         setSnapshots(rows)
       })
       .catch((e: Error) => live && setError(e.message))
@@ -74,8 +88,8 @@ export default function SnapshotList({ listingId, refreshKey }: { listingId: str
         <article key={s.id} className="space-y-4 rounded-card border border-line bg-surface p-6 shadow-sm shadow-ink/5">
           {editingId === s.id ? (
             <div className="space-y-3">
-              <SnapshotForm listingId={listingId} initial={snapshotRowToForm(s)}
-                onSubmitRow={(row) => updateSnapshot(s.id, toUpdate(row))}
+              <SnapshotForm listingId={listingId} initial={snapshotRowToForm(s, options[s.id] ?? [])}
+                onSubmitRow={(row) => saveEdit(s.id, row)}
                 onSaved={() => {
                   setEditingId(null)
                   reload()
@@ -107,12 +121,7 @@ export default function SnapshotList({ listingId, refreshKey }: { listingId: str
             <Text label="Inclusions" value={s.inclusions} />
             <Text label="Exclusions" value={s.exclusions} />
             <Text label="Why this" value={s.why_this} />
-            <List
-              label="Options"
-              items={s.options?.map((o) =>
-                [o.name, o.description, o.price != null ? String(o.price) : null].filter(Boolean).join(' — '),
-              )}
-            />
+            <List label="Options" items={options[s.id]?.map(optionLine)} />
           </dl>
           {confirmingId === s.id ? (
             <ConfirmDialog label="Confirm delete snapshot"

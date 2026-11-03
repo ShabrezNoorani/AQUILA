@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { callsOf, createFakeSupabase, type Query, type Result } from '../test/fakeSupabase'
 import { supabase } from '../../../lib/supabase'
 import ImportPage from './ImportPage'
+import SnapshotList from '../SnapshotList'
 import { BOOKMARKLET } from './bookmarklet'
 import viator2 from '../../../../fixtures/viator-2.html?raw'
 
@@ -142,5 +143,36 @@ describe('ImportPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /save snapshot/i }))
     expect(await screen.findByText(/rating must be/i)).toBeTruthy()
     expect(inserts()).toHaveLength(0)
+  })
+
+  it('a snapshot saved through import shows its options in the snapshot list straight away', async () => {
+    // A tiny database: mt_save_snapshot stores the snapshot (without an options column) and its option rows.
+    const saved: { snapshot?: Record<string, unknown>; options: Record<string, unknown>[] } = { options: [] }
+    vi.mocked(supabase.rpc).mockImplementation(((_fn: string, args: RpcArgs) => {
+      saved.snapshot = { ...args.p_snapshot, id: 's1' }
+      saved.options = args.p_options.map((o) => ({ ...o, id: `o${o.sort_order}`, snapshot_id: 's1' }))
+      return Promise.resolve({ data: 's1', error: null })
+    }) as never)
+    respond = (q) => {
+      if (q.table === 'mt_snapshots') return { data: saved.snapshot ? [saved.snapshot] : [], error: null }
+      if (q.table === 'mt_snapshot_options') {
+        const [[, id]] = callsOf(q, 'eq') as [string, string][]
+        return { data: saved.options.filter((o) => o.snapshot_id === id), error: null }
+      }
+      return { data: [], error: null }
+    }
+
+    const onSaved = vi.fn()
+    const { unmount } = render(<ImportPage listingId="L1" onSaved={onSaved} />)
+    paste(payload)
+    await screen.findByRole('region', { name: /preview/i })
+    fireEvent.click(screen.getByRole('button', { name: /save snapshot/i }))
+    await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    expect(saved.snapshot).not.toHaveProperty('options')
+    unmount()
+
+    render(<SnapshotList listingId="L1" refreshKey={0} />)
+    const article = await screen.findByRole('article')
+    expect(within(valueFor(article, 'Options')).getByRole('listitem').textContent).toBe('Shared — 40')
   })
 })

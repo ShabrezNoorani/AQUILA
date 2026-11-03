@@ -7,7 +7,7 @@ import {
   parseRating,
   parseReviewCount,
 } from './parse'
-import { LISTING_SOURCES, type ListingInsert, type ListingSource, type Snapshot, type SnapshotInsert } from './types'
+import { LISTING_SOURCES, type ListingInsert, type ListingSource, type Snapshot, type SnapshotInsert, type SnapshotOption } from './types'
 
 export type Mapped<Row, Field extends string> =
   | { ok: true; row: Row }
@@ -153,10 +153,11 @@ export function snapshotFormToRow(
 }
 
 /**
- * Turns a saved snapshot back into form text, so it can be edited in the snapshot form.
- * snapshotFormToRow(listingId, snapshotRowToForm(row)) gives back the same values.
+ * Turns a saved snapshot and its mt_snapshot_options rows back into form text, so it can be
+ * edited in the snapshot form. The options come only from those rows, never from the
+ * snapshot's old options column. snapshotFormToRow then gives back the same values.
  */
-export function snapshotRowToForm(row: Snapshot): SnapshotForm {
+export function snapshotRowToForm(row: Snapshot, optionRows: SnapshotOption[]): SnapshotForm {
   const text = (v: string | null | undefined) => v ?? ''
   const list = (v: string[] | null | undefined, sep: string) => (v ?? []).join(sep)
   const num = (v: number | null | undefined) => (v == null ? '' : String(v))
@@ -171,12 +172,13 @@ export function snapshotRowToForm(row: Snapshot): SnapshotForm {
     exclusions: text(row.exclusions),
     why_this: text(row.why_this),
     itinerary: list(row.itinerary, '\n'),
-    options: (row.options ?? [])
+    options: [...optionRows]
+      .sort((a, b) => a.sort_order - b.sort_order)
       .map((o) => {
         const name = o.name.replace(/\|/g, '/')
         const description = (o.description ?? '').replace(/\|/g, '/')
-        if (o.price == null && !description) return name
-        return `${name} | ${description} | ${o.price ?? ''}`
+        if (o.price_per_person == null && !description) return name
+        return `${name} | ${description} | ${o.price_per_person ?? ''}`
       })
       .join('\n'),
     rating: num(row.rating),

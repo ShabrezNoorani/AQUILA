@@ -269,7 +269,7 @@ const VIATOR2_OVERVIEW = [
 describe('SnapshotList', () => {
   it('shows a snapshot overview from viator-2, one paragraph per line', async () => {
     const parsed = parseViatorListing(viator2, 'https://www.viator.com/tours/Paris/x/d479-8954P40')
-    respond = () => ({
+    respond = (q) => q.table === 'mt_snapshot_options' ? { data: [], error: null } : ({
       data: [{ id: 'v2', listing_id: 'L1', title: parsed.fields.title, overview: parsed.fields.overview, captured_at: '2026-11-02T10:00:00Z' }],
       error: null,
     })
@@ -283,14 +283,14 @@ describe('SnapshotList', () => {
   }, 30_000)
 
   it('leaves out the overview when a snapshot has none', async () => {
-    respond = () => ({ data: [{ id: 'x', listing_id: 'L1', title: 'No overview', overview: null }], error: null })
+    respond = (q) => (q.table === 'mt_snapshot_options' ? { data: [], error: null } : { data: [{ id: 'x', listing_id: 'L1', title: 'No overview', overview: null }], error: null })
     render(<SnapshotList listingId="L1" refreshKey={0} />)
     const item = await screen.findByRole('article')
     expect(within(item).queryByText('Overview', { selector: 'dt' })).toBeNull()
   })
 
   it('requests snapshots newest first and renders them in that order', async () => {
-    respond = () => ({
+    respond = (q) => q.table === 'mt_snapshot_options' ? { data: [], error: null } : ({
       data: [
         { id: 'b', listing_id: 'L1', title: 'Newer', captured_at: '2026-11-02T10:00:00Z', options: [], highlights: [], languages: [], itinerary: [] },
         { id: 'a', listing_id: 'L1', title: 'Older', captured_at: '2026-10-01T10:00:00Z', options: [], highlights: [], languages: [], itinerary: [] },
@@ -307,7 +307,7 @@ describe('SnapshotList', () => {
 
   it('shows the date from captured_at', async () => {
     const at = '2026-11-02T10:00:00Z'
-    respond = () => ({
+    respond = (q) => q.table === 'mt_snapshot_options' ? { data: [], error: null } : ({
       data: [{ id: 'c', listing_id: 'L1', title: 'Dated', captured_at: at }],
       error: null,
     })

@@ -100,7 +100,8 @@ export async function createSnapshot(row: SnapshotInsert): Promise<Snapshot> {
   return unwrap<Snapshot>(await supabase.from(SNAPSHOTS).insert(row).select().single())
 }
 
-export async function updateSnapshot(id: string, patch: SnapshotUpdate): Promise<Snapshot> {
+/** Updates a snapshot's own columns. Options are not written here: see replaceSnapshotOptions. */
+export async function updateSnapshot(id: string, patch: Omit<SnapshotUpdate, 'options'>): Promise<Snapshot> {
   return unwrap<Snapshot>(await supabase.from(SNAPSHOTS).update(patch).eq('id', id).select().single())
 }
 
@@ -243,6 +244,35 @@ export async function fetchSnapshotOptions(snapshotId: string): Promise<Snapshot
       .eq('snapshot_id', snapshotId)
       .order('sort_order', { ascending: true }),
   ) ?? []
+}
+
+/** The option rows for several snapshots, keyed by snapshot id, each in sort_order. */
+export async function fetchOptionsForSnapshots(snapshotIds: string[]): Promise<Record<string, SnapshotOption[]>> {
+  const lists = await Promise.all(snapshotIds.map((id) => fetchSnapshotOptions(id)))
+  return Object.fromEntries(snapshotIds.map((id, i) => [id, lists[i]]))
+}
+
+/**
+ * Replaces a snapshot's option rows: deletes every row for that snapshot_id, then inserts
+ * the new ones. These are two separate calls, so if the insert fails the old rows are
+ * already gone, and the error says so.
+ */
+export async function replaceSnapshotOptions(
+  snapshotId: string,
+  rows: Omit<SnapshotOptionInsert, 'snapshot_id'>[],
+): Promise<void> {
+  const removed = await supabase.from(SNAPSHOT_OPTIONS).delete().eq('snapshot_id', snapshotId)
+  if (removed.error) {
+    throw new Error(`${removed.error.message}. The options were not changed.`)
+  }
+  if (!rows.length) return
+  const added = await supabase.from(SNAPSHOT_OPTIONS).insert(rows.map((r) => ({ ...r, snapshot_id: snapshotId })))
+  if (added.error) {
+    throw new Error(
+      `${added.error.message}. The old options were already removed, so this snapshot's options may now be missing. ` +
+        'Edit the snapshot again to add them back.',
+    )
+  }
 }
 
 // ---------- saving a snapshot ----------
