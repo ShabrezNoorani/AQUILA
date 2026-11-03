@@ -3,6 +3,7 @@
 
 import type { ReactNode } from 'react'
 import { hrefFor } from '../router'
+import { Footer } from './Footer'
 
 export type ShellSection = 'listings' | 'tags' | 'ask' | 'help'
 
@@ -52,7 +53,10 @@ export function AppShell({ active, children }: { active: ShellSection; children:
           })}
         </nav>
       </aside>
-      <div className="min-w-0 flex-1">{children}</div>
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
+        <div className="flex-1">{children}</div>
+        <Footer />
+      </div>
     </div>
   )
 }

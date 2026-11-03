@@ -45,6 +45,13 @@ describe('AppShell', () => {
     const nav = screen.getByRole('navigation', { name: 'Main' })
     expect(within(nav).getByRole('link', { name: 'Ask AI' }).getAttribute('aria-current')).toBe('page')
   })
+
+  it('shows the footer below the page content', () => {
+    render(<AppShell active="listings"><p>body</p></AppShell>)
+    const footer = screen.getByRole('contentinfo')
+    expect(footer.textContent).toBe('MADE IN PARIS · © 2026')
+    expect(screen.getByText('body').compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
 })
 
 describe('Page', () => {

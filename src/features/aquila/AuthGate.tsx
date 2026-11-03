@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { OWNER_USER_ID } from '../../lib/owner'
 import LoginForm from './LoginForm'
 import { buttonClass } from './ui'
+import { Footer } from './ui/Footer'
 
 export default function AuthGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
@@ -18,7 +19,14 @@ export default function AuthGate({ children }: { children: ReactNode }) {
     return () => listener.subscription.unsubscribe()
   }, [])
 
-  if (!ready) return <p className="min-h-screen bg-paper p-8 text-ink-3">Loading…</p>
+  if (!ready) {
+    return (
+      <div className="flex min-h-screen flex-col bg-paper text-ink">
+        <p className="flex-1 p-8 text-ink-3">Loading…</p>
+        <Footer />
+      </div>
+    )
+  }
 
   if (!session) {
     return (
@@ -30,12 +38,15 @@ export default function AuthGate({ children }: { children: ReactNode }) {
 
   if (session.user.id !== OWNER_USER_ID) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-paper text-ink">
-        <h1 className="text-xl font-semibold">Not authorized</h1>
-        <button onClick={() => supabase.auth.signOut()}
-          className={buttonClass('secondary')}>
-          Sign out
-        </button>
+      <div className="flex min-h-screen flex-col bg-paper text-ink">
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6">
+          <h1 className="text-xl font-semibold">Not authorized</h1>
+          <button onClick={() => supabase.auth.signOut()}
+            className={buttonClass('secondary')}>
+            Sign out
+          </button>
+        </div>
+        <Footer />
       </div>
     )
   }
