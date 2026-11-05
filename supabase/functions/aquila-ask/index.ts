@@ -50,7 +50,8 @@ const SNAPSHOT_COLUMNS = [
 export const SYSTEM_PROMPT = [
   'You answer questions about tour listings for the owner of a tour business.',
   'Use only the JSON data you are given. It is grouped by company: "companies" is a list of groups, each with the company name, "own", and that company\'s listings. The group with "company": null holds listings that have no company (Unassigned).',
-  'Each listing has a "company": its name, and "own": true when it is the owner\'s own company (OWN). Every other company is a competitor; "company" is null when the listing has no company.',
+  'Each listing has a company name in "company" ({ "name", "own" }), or null when it has no company. A company with "own": true is marked OWN: it is the owner\'s own company. Any other company is a competitor.',
+  'Each listing also has "own": true for the owner\'s own listings and false for competitors\' listings. Always use the OWN flag ("own") to tell the owner\'s listings from competitors\' listings; never guess it from names.',
   'Each listing has all its tags, each with a "kind" (chosen by the owner, for example type or place) and a "name". Use tags only as given.',
   'When the question is about companies, for example "which competitor tour has the best reviews?", compare the company groups using their listings\' reviews, ratings and prices.',
   'Rules:',
@@ -157,7 +158,8 @@ export function parseAskRequest(body: unknown): AskRequest {
 export type ListingContext = {
   listing_id: string
   name: string
-  ownership: 'own' | 'competitor'
+  /** True for a listing of our own company (OWN); false for a competitor's listing. */
+  own: boolean
   /** The listing's company, and whether it is our own (OWN). null when it has no company. */
   company: { name: string; own: boolean } | null
   /** Every tag on the listing, of every kind. */
@@ -235,7 +237,7 @@ export function buildContext(input: {
     return {
       listing_id: l.id,
       name: l.name,
-      ownership: (companyOf(l)?.own ?? l.is_own) ? 'own' : 'competitor',
+      own: companyOf(l)?.own ?? l.is_own === true,
       company: companyOf(l),
       tags: input.links
         .filter((k) => k.listing_id === l.id && tagById.has(k.tag_id))

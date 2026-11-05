@@ -1,9 +1,12 @@
 // Companies: every company as a Library of cards or a List (table), sorted A to Z or Z to A,
-// filtered by tags, with inline rename; and one company's listings. Listings without a company
+// filtered by tags, with inline rename; and one company's listings, also as Library or List. Listings without a company
 // appear under "Unassigned". Tag names always come from mt_tags; none are written here.
 
 import { useEffect, useState, type FormEvent } from 'react'
-import { createCompany, fetchAllListingTags, fetchListings, fetchTags, listCompanies, renameCompany } from '../api'
+import {
+  createCompany, fetchAllListingTags, fetchListingSummary, fetchListings, fetchTags, listCompanies, renameCompany,
+  type ListingSummary,
+} from '../api'
 import { hrefFor } from '../router'
 import TagFilter from '../tags/TagFilter'
 import { byKindThenName, hasAllTags, tagsByListing, usedTags } from '../tags/tagMapping'
@@ -25,6 +28,8 @@ type Sort = 'az' | 'za'
 const VIEW_KEY = 'aquila.companies.view'
 const SORT_KEY = 'aquila.companies.sort'
 const TAGS_KEY = 'aquila.companies.tags'
+/** The view chosen inside one company: Library (cards) or List (table). */
+const COMPANY_VIEW_KEY = 'aquila.company.view'
 
 function readStored<T extends string>(storage: () => Storage, key: string, allowed: readonly T[], fallback: T): T {
   try {
@@ -115,6 +120,21 @@ const plural = (n: number) => `${n} ${n === 1 ? 'listing' : 'listings'}`
 
 function OwnBadge() {
   return <Badge tone="strong">OWN</Badge>
+}
+
+/** The "Library" and "List" buttons. */
+function ViewToggle({ view, onChange }: { view: View; onChange: (v: View) => void }) {
+  return (
+    <div role="group" aria-label="View" className="inline-flex rounded-card border border-line bg-paper p-1">
+      {(['library', 'list'] as const).map((v) => (
+        <button key={v} type="button" aria-pressed={view === v} onClick={() => onChange(v)}
+          className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+            view === v ? 'bg-surface text-ink shadow-sm shadow-ink/5' : 'text-ink-3 hover:text-ink'}`}>
+          {v === 'library' ? 'Library' : 'List'}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 /** One company's name, as a link, with an inline rename form. */
@@ -276,15 +296,7 @@ function CompaniesOverview() {
       {data && !nothingYet && (
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div role="group" aria-label="View" className="inline-flex rounded-card border border-line bg-paper p-1">
-              {(['library', 'list'] as const).map((v) => (
-                <button key={v} type="button" aria-pressed={view === v} onClick={() => chooseView(v)}
-                  className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
-                    view === v ? 'bg-surface text-ink shadow-sm shadow-ink/5' : 'text-ink-3 hover:text-ink'}`}>
-                  {v === 'library' ? 'Library' : 'List'}
-                </button>
-              ))}
-            </div>
+            <ViewToggle view={view} onChange={chooseView} />
             <label className="flex items-center gap-2 text-sm font-medium text-ink">
               Sort
               <select className={`${inputClass} w-auto`} value={sort} onChange={(e) => chooseSort(e.target.value as Sort)}>
@@ -325,13 +337,13 @@ function CompaniesOverview() {
           {view === 'list' && (rows.length > 0 || showUnassigned) && (
             <Table aria-label="Companies">
               <THead>
-                <tr><Th>Company</Th><Th>Marker</Th><Th className="text-right">Listings</Th></tr>
+                <tr><Th>Company</Th><Th>OWN</Th><Th className="text-right">Listings</Th></tr>
               </THead>
               <tbody>
                 {rows.map((r) => (
                   <Tr key={r.company!.id}>
                     <Td><NameCell company={r.company!} onRenamed={(name) => rename(r.company!.id, name)} /></Td>
-                    <Td>{r.company!.is_own ? <OwnBadge /> : <span className="text-ink-3">Competitor</span>}</Td>
+                    <Td>{r.company!.is_own && <OwnBadge />}</Td>
                     <Td className="text-right tabular-nums">{filtering ? `${r.matching} of ${r.total}` : r.total}</Td>
                   </Tr>
                 ))}
@@ -355,10 +367,42 @@ function CompaniesOverview() {
 
 // ---------- one company's listings ----------
 
+/** Each listing's latest rating, reviews and lowest price, loaded one by one; a failed one stays missing. */
+function useSummaries(listingIds: string[]) {
+  const [summaries, setSummaries] = useState<Map<string, ListingSummary>>(new Map())
+  const key = listingIds.join(',')
+  useEffect(() => {
+    let live = true
+    for (const id of key ? key.split(',') : []) {
+      fetchListingSummary(id)
+        .then((s) => live && setSummaries((m) => new Map(m).set(id, s)))
+        .catch(() => {
+          // This card shows "—" instead of numbers.
+        })
+    }
+    return () => {
+      live = false
+    }
+  }, [key])
+  return summaries
+}
+
+const formatPrice = (n: number) => n.toLocaleString('en', { maximumFractionDigits: 2 })
+
+/** Rating and review count, e.g. "4.8 ★ · 120 reviews". */
+function ratingText(s: ListingSummary | undefined): string {
+  if (!s || (s.rating == null && s.review_count == null)) return 'No rating yet'
+  const parts = []
+  if (s.rating != null) parts.push(`${s.rating} ★`)
+  if (s.review_count != null) parts.push(`${s.review_count.toLocaleString('en')} ${s.review_count === 1 ? 'review' : 'reviews'}`)
+  return parts.join(' · ')
+}
+
 /** One company's listings, or the listings with no company when companyId is "unassigned". */
 function CompanyListings({ companyId }: { companyId: string }) {
   const { data, error } = useData()
   const [selected, setSelected] = useSelectedTags()
+  const [view, setView] = useState<View>(() => readStored(() => localStorage, COMPANY_VIEW_KEY, ['library', 'list'], 'library'))
   const isUnassigned = companyId === UNASSIGNED
   const company = isUnassigned ? null : data?.companies.find((c) => c.id === companyId) ?? null
   const missing = !!data && !isUnassigned && !company
@@ -367,6 +411,12 @@ function CompanyListings({ companyId }: { companyId: string }) {
   const active = data ? selected.filter((id) => usedIds.has(id)) : selected
   const own = data ? data.listings.filter((l) => (isUnassigned ? !l.company_id : l.company_id === companyId)) : []
   const shown = data ? own.filter((l) => hasAllTags(data.tagMap, l.id, active)) : []
+  const summaries = useSummaries(view === 'library' && !missing ? shown.map((l) => l.id) : [])
+
+  const chooseView = (v: View) => {
+    setView(v)
+    writeStored(() => localStorage, COMPANY_VIEW_KEY, v)
+  }
 
   const back = { href: hrefFor.companies(), label: '← All companies' }
   const title = isUnassigned ? 'Unassigned' : company?.name ?? 'Company'
@@ -379,11 +429,34 @@ function CompanyListings({ companyId }: { companyId: string }) {
       {!error && !data && <p className="text-sm text-ink-3">Loading…</p>}
       {data && !missing && (
         <>
+          <ViewToggle view={view} onChange={chooseView} />
           <TagFilter tags={data.usedTags} selected={active} onChange={setSelected} />
           {shown.length === 0 && (
             <EmptyState title={active.length ? 'No listings here have all the selected tags.' : 'No listings.'} />
           )}
-          {shown.length > 0 && (
+          {view === 'library' && shown.length > 0 && (
+            <ul aria-label={`Listings for ${title}`} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {shown.map((l) => {
+                const s = summaries.get(l.id)
+                return (
+                  <li key={l.id} aria-label={l.name}
+                    className="space-y-3 rounded-card border border-line bg-surface p-5 shadow-sm shadow-ink/5">
+                    <div className="flex items-start justify-between gap-2">
+                      <a href={hrefFor.listing(l.id)} className="font-medium text-ink hover:text-accent">{l.name}</a>
+                      {company?.is_own && <OwnBadge />}
+                    </div>
+                    <p className="text-sm text-ink-3">{company?.name ?? 'Unassigned'}</p>
+                    <p className="text-sm text-ink-2">
+                      {s?.price_from != null ? `From ${formatPrice(s.price_from)}` : 'No price yet'}
+                    </p>
+                    <p className="text-sm text-ink-2">{ratingText(s)}</p>
+                    <TagChips tags={data.tagMap.get(l.id) ?? []} />
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          {view === 'list' && shown.length > 0 && (
             <Table aria-label={`Listings for ${title}`}>
               <THead>
                 <tr><Th>Listing</Th><Th>Tags</Th><Th>Status</Th></tr>

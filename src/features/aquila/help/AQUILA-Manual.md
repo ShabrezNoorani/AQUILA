@@ -26,7 +26,8 @@ AQUILA does not publish anything, contact customers, change prices, or act on co
 | Area | Status |
 |---|---|
 | Sign-in restricted to the owner | Built and tested |
-| Listings (own and competitor), with edit and delete | Built and tested |
+| Listings, each with its company (ours marked OWN), with edit and delete | Built and tested |
+| Companies page, and each company's listings, as Library (cards) or List (table), with tag filter | Built and tested |
 | Snapshots (dated records of a listing), with edit and delete | Built and tested |
 | Reviews on a listing, with add, edit and delete | Built and tested |
 | Tags: any number per listing, of any kind (for example type, place, food) | Built and tested |
@@ -45,7 +46,8 @@ AQUILA does not publish anything, contact customers, change prices, or act on co
 
 ## 3. Concepts
 
-- **Listing.** One tour product on one website. Each listing is marked as the owner's own tour or as a competitor's. A listing has a source (Viator, TripAdvisor, GetYourGuide, or manual), a link, and an active flag.
+- **Listing.** One tour product on one website. Each listing belongs to a **company**, set in the one Company box. The **OWN** tick beside it marks the company as the owner's own (ticked = our own company, not ticked = competitor). A listing has a source (Viator, TripAdvisor, GetYourGuide, or manual), a link, and an active flag.
+- **Company.** Who owns a tour. The Companies page shows every company; click one to see its listings as **Library** (cards with the title, company, OWN badge, price from the lowest option price, rating and review count, and tags) or **List** (a table). The chosen view is remembered in this browser.
 - **Tags.** Every tag has a *kind* and a *name*, for example kind *type* with walking, boat or food, or kind *place* with Notre Dame, Ile de la Cite or Le Marais. The owner creates tags and can add new kinds at any time; nothing is hard-coded. A listing can have any number of tags of any kinds, or none, and mixing is allowed (for example Food + Walking + Interior). A tag with the same kind and the same name, ignoring capitals and extra spaces, is the same tag. Filters show one row per kind, and when several tags are selected a listing must have all of them.
 - **Snapshot.** A dated record of a listing's details at one moment: title, duration, languages, group type, highlights, inclusions, exclusions, the overview, itinerary, rating, review count, and urgency text. Snapshots show change over time. The raw captured page is kept with each snapshot.
 - **Option.** One bookable variant inside a snapshot, with its name, description, price per person, number of travellers the price is for, and the date the price applies to. Options are stored in their own table so they can be compared across snapshots.
@@ -117,7 +119,7 @@ All tables are in the same Supabase project as AURELIA, and all are prefixed `mt
 
 | Table | Purpose |
 |---|---|
-| `mt_listings` | Each tour product: name, own or competitor, source, link, competitor name, active flag, and capture cadence in days |
+| `mt_listings` | Each tour product: name, company (the company's OWN mark says if it is ours), source, link, active flag, and capture cadence in days |
 | `mt_tags` | Every tag: kind (any text, for example type or place) and name. Names are unique per kind |
 | `mt_listing_tags` | Which tags belong to which listing |
 | `mt_snapshots` | Dated records of a listing's details, status, and raw page |

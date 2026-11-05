@@ -76,23 +76,21 @@ export default function NewListingForm({ onCreated }: { onCreated: (id: string) 
               if (match) set('is_own', match.is_own)
             }} error={errors.company} />
 
-          <label className="flex items-center gap-2 text-sm font-medium text-ink">
-            <input type="checkbox" className="h-4 w-4 accent-ink" checked={form.is_own}
-              onChange={(e) => set('is_own', e.target.checked)} />
-            This is ours (OWN)
-          </label>
-
-          <div className="grid gap-5 sm:grid-cols-2">
-            <Field id="listing-source" label="Source" error={errors.source}>
-              <select id="listing-source" value={form.source} className={inputClass}
-                onChange={(e) => set('source', e.target.value as ListingSource)}>
-                {LISTING_SOURCES.map((s) => <option key={s} value={s}>{SOURCE_LABELS[s]}</option>)}
-              </select>
-            </Field>
-
-            <TextField id="listing-competitor-name" label="Competitor name" value={form.competitor_name}
-              onChange={(v) => set('competitor_name', v)} error={errors.competitor_name} />
+          <div className="space-y-1">
+            <label className="flex items-center gap-2 text-sm font-medium text-ink">
+              <input type="checkbox" className="h-4 w-4 accent-ink" checked={form.is_own} aria-describedby="listing-own-help"
+                onChange={(e) => set('is_own', e.target.checked)} />
+              This is ours (OWN)
+            </label>
+            <p id="listing-own-help" className="text-xs text-ink-3">Ticked = our own company. Not ticked = competitor.</p>
           </div>
+
+          <Field id="listing-source" label="Source" error={errors.source}>
+            <select id="listing-source" value={form.source} className={inputClass}
+              onChange={(e) => set('source', e.target.value as ListingSource)}>
+              {LISTING_SOURCES.map((s) => <option key={s} value={s}>{SOURCE_LABELS[s]}</option>)}
+            </select>
+          </Field>
 
           <TextField id="listing-url" label="URL" value={form.url} placeholder="https://…"
             help="The public product page, starting with http:// or https://."

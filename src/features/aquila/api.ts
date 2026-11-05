@@ -332,6 +332,45 @@ export async function replaceSnapshotOptions(
   }
 }
 
+// ---------- listing summaries ----------
+
+/** A listing's latest numbers, for cards: from its newest snapshot and that snapshot's option rows. */
+export type ListingSummary = {
+  captured_at: string | null
+  rating: number | null
+  review_count: number | null
+  /** The lowest price per person among the latest snapshot's options, or null when none has a price. */
+  price_from: number | null
+}
+
+/**
+ * The latest snapshot's rating, review count and lowest option price for one listing.
+ * Reads only those columns (never the saved page), and null values when there is no snapshot yet.
+ */
+export async function fetchListingSummary(listingId: string): Promise<ListingSummary> {
+  const rows = unwrap<{ id: string; captured_at: string | null; rating: number | null; review_count: number | null }[] | null>(
+    await supabase
+      .from(SNAPSHOTS)
+      .select('id, captured_at, rating, review_count')
+      .eq('listing_id', listingId)
+      .order('captured_at', { ascending: false })
+      .limit(1),
+  ) ?? []
+  const latest = rows[0]
+  if (!latest) return { captured_at: null, rating: null, review_count: null, price_from: null }
+  const prices = (unwrap<{ price_per_person: number | null }[] | null>(
+    await supabase.from(SNAPSHOT_OPTIONS).select('price_per_person').eq('snapshot_id', latest.id),
+  ) ?? [])
+    .map((o) => o.price_per_person)
+    .filter((p): p is number => typeof p === 'number' && Number.isFinite(p))
+  return {
+    captured_at: latest.captured_at ?? null,
+    rating: latest.rating ?? null,
+    review_count: latest.review_count ?? null,
+    price_from: prices.length ? Math.min(...prices) : null,
+  }
+}
+
 // ---------- saving a snapshot ----------
 
 /**

@@ -43,16 +43,16 @@ type EditForm = {
   name: string
   source: ListingSource
   url: string
-  competitor_name: string
   active: boolean
   company: string
   is_own: boolean
 }
 
 /**
- * Edits name, company, OWN, source, URL, competitor name and active.
- * Only shown once the companies have loaded, so the company box never starts wrongly empty.
- * A listing with no company yet starts with its old competitor name in the Company box.
+ * Edits name, company, OWN, source, URL and active. The company is the only field that says who
+ * owns the listing. Only shown once the companies have loaded, so the company box never starts
+ * wrongly empty. A listing with no company yet starts with its old competitor_name in the
+ * Company box, so one Save links it; that old column is never shown or changed.
  */
 function EditListingForm({ listing, companies, onSaved, onCancel }: {
   listing: Listing
@@ -66,7 +66,6 @@ function EditListingForm({ listing, companies, onSaved, onCancel }: {
       name: start.name,
       source: start.source,
       url: start.url,
-      competitor_name: start.competitor_name,
       active: listing.active,
       company: start.company,
       is_own: start.is_own,
@@ -89,7 +88,7 @@ function EditListingForm({ listing, companies, onSaved, onCancel }: {
     setErrors({})
     setBusy(true)
     try {
-      const { name, source, url, competitor_name } = mapped.row
+      const { name, source, url } = mapped.row
       // An empty company box leaves the listing unassigned. Otherwise the company with the same
       // name (ignoring capitals, extra spaces and trailing dots) is reused, or created with the
       // OWN tick. If the tick differs from an existing company's OWN marker, the company is updated,
@@ -101,7 +100,7 @@ function EditListingForm({ listing, companies, onSaved, onCancel }: {
         if (found.existed && found.company.is_own !== form.is_own) company = await setCompanyOwn(company.id, form.is_own)
       }
       const updated = await updateListing(listing.id, {
-        name, is_own: form.is_own, source, url, competitor_name, active: form.active, company_id: company?.id ?? null,
+        name, is_own: form.is_own, source, url, active: form.active, company_id: company?.id ?? null,
       })
       onSaved(updated, company)
     } catch (err) {
@@ -123,21 +122,20 @@ function EditListingForm({ listing, companies, onSaved, onCancel }: {
             const match = findCompanyByName(companies, v)
             if (match) set('is_own', match.is_own)
           }} />
-        <label className="flex items-center gap-2 text-sm font-medium text-ink">
-          <input type="checkbox" className="h-4 w-4 accent-ink" checked={form.is_own}
-            onChange={(e) => set('is_own', e.target.checked)} />
-          This is ours (OWN)
-        </label>
-        <div className="grid gap-5 sm:grid-cols-2">
-          <Field id="edit-listing-source" label="Source" error={errors.source}>
-            <select id="edit-listing-source" value={form.source} className={inputClass}
-              onChange={(e) => set('source', e.target.value as ListingSource)}>
-              {LISTING_SOURCES.map((s) => <option key={s} value={s}>{SOURCE_LABELS[s]}</option>)}
-            </select>
-          </Field>
-          <TextField id="edit-listing-competitor-name" label="Competitor name" value={form.competitor_name}
-            onChange={(v) => set('competitor_name', v)} />
+        <div className="space-y-1">
+          <label className="flex items-center gap-2 text-sm font-medium text-ink">
+            <input type="checkbox" className="h-4 w-4 accent-ink" checked={form.is_own} aria-describedby="edit-listing-own-help"
+              onChange={(e) => set('is_own', e.target.checked)} />
+            This is ours (OWN)
+          </label>
+          <p id="edit-listing-own-help" className="text-xs text-ink-3">Ticked = our own company. Not ticked = competitor.</p>
         </div>
+        <Field id="edit-listing-source" label="Source" error={errors.source}>
+          <select id="edit-listing-source" value={form.source} className={inputClass}
+            onChange={(e) => set('source', e.target.value as ListingSource)}>
+            {LISTING_SOURCES.map((s) => <option key={s} value={s}>{SOURCE_LABELS[s]}</option>)}
+          </select>
+        </Field>
         <TextField id="edit-listing-url" label="URL" value={form.url}
           onChange={(v) => set('url', v)} error={errors.url} />
         <label className="flex items-center gap-2 text-sm text-ink">

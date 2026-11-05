@@ -98,7 +98,6 @@ describe('NewListingForm', () => {
     fireEvent.change(screen.getByLabelText(/^company/i), { target: { value: '  Rival   Co ' } })
     fireEvent.change(screen.getByLabelText(/source/i), { target: { value: 'tripadvisor' } })
     fireEvent.change(screen.getByLabelText(/url/i), { target: { value: 'https://example.com/t' } })
-    fireEvent.change(screen.getByLabelText(/competitor name/i), { target: { value: 'Rival Co' } })
     fireEvent.click(screen.getByRole('button', { name: /create listing/i }))
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-1'))
@@ -112,10 +111,20 @@ describe('NewListingForm', () => {
       is_own: false,
       source: 'tripadvisor',
       url: 'https://example.com/t',
-      competitor_name: 'Rival Co',
+      competitor_name: null,
       active: true,
       company_id: 'C-new',
     })
+  })
+
+  it('has one Company box with the OWN tick beside it, and no competitor name box', async () => {
+    respond = newListingRespond([])
+    render(<NewListingForm onCreated={() => {}} />)
+    await screen.findByLabelText('Tour')
+    expect(screen.getByLabelText('Company *')).toBeTruthy()
+    expect(screen.queryByLabelText(/competitor/i)).toBeNull()
+    expect(screen.queryByText(/competitor name/i)).toBeNull()
+    expect(screen.getByText('Ticked = our own company. Not ticked = competitor.')).toBeTruthy()
   })
 
   it('requires a company and saves nothing without one', async () => {

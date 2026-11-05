@@ -6,7 +6,7 @@
 //   #/tags             → manage type and place tags
 //   #/ask              → ask AI about listings with chosen tags
 //   #/help             → the AQUILA manual
-//   #/companies        → competitor companies
+//   #/companies        → companies (ours is marked OWN)
 //   #/companies/<id>   → one company's listings ('unassigned' for listings with no company)
 
 import { useEffect, useState } from 'react'

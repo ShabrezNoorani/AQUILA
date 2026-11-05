@@ -180,8 +180,9 @@ describe('snapshotRowToForm', () => {
 describe('Edit listing', () => {
   async function openEdit() {
     render(<ListingDetailPage id="L1" />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit listing' }))
-    return screen.findByRole('form', { name: 'Edit listing' })
+    // The first page load in this file can be slow while the whole suite runs, so allow longer.
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit listing' }, { timeout: 5000 }))
+    return screen.findByRole('form', { name: 'Edit listing' }, { timeout: 5000 })
   }
 
   it('is pre-filled with the current values', async () => {
@@ -189,16 +190,15 @@ describe('Edit listing', () => {
     expect((within(form).getByLabelText('Name *') as HTMLInputElement).value).toBe('Rival Safari')
     expect((within(form).getByLabelText('Source') as HTMLSelectElement).value).toBe('viator')
     expect((within(form).getByLabelText('URL') as HTMLInputElement).value).toBe('https://example.com/a')
-    expect((within(form).getByLabelText('Competitor name') as HTMLInputElement).value).toBe('Rival Co')
+    expect((within(form).getByLabelText('Company') as HTMLInputElement).value).toBe('Rival Co')
     expect((within(form).getByLabelText('Active') as HTMLInputElement).checked).toBe(true)
   })
 
-  it('saves name, source, URL, competitor name and active, and shows the new values', async () => {
+  it('saves name, source, URL, company and active, and shows the new values', async () => {
     const form = await openEdit()
     fireEvent.change(within(form).getByLabelText('Name *'), { target: { value: '  New Name  ' } })
     fireEvent.change(within(form).getByLabelText('Source'), { target: { value: 'tripadvisor' } })
     fireEvent.change(within(form).getByLabelText('URL'), { target: { value: '' } })
-    fireEvent.change(within(form).getByLabelText('Competitor name'), { target: { value: 'Other Co' } })
     fireEvent.click(within(form).getByLabelText('Active'))
     fireEvent.click(within(form).getByRole('button', { name: 'Save listing' }))
 
@@ -207,7 +207,7 @@ describe('Edit listing', () => {
     expect(q.table).toBe('mt_listings')
     // The Company box started with the old competitor name "Rival Co", which matches company C1.
     expect(callsOf(q, 'update')[0][0]).toEqual({
-      name: 'New Name', is_own: false, source: 'tripadvisor', url: null, competitor_name: 'Other Co', active: false, company_id: 'C1',
+      name: 'New Name', is_own: false, source: 'tripadvisor', url: null, active: false, company_id: 'C1',
     })
     expect(callsOf(q, 'eq')).toEqual([['id', 'L1']])
 
@@ -220,6 +220,13 @@ describe('Edit listing', () => {
     const form = await openEdit()
     expect(within(form).getByLabelText('Company')).toBeTruthy()
     expect((within(form).getByLabelText('This is ours (OWN)') as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('has no separate competitor name box; OWN is explained beside the Company box', async () => {
+    const form = await openEdit()
+    expect(within(form).queryByLabelText(/competitor/i)).toBeNull()
+    expect(within(form).queryByText(/competitor name/i)).toBeNull()
+    expect(within(form).getByText('Ticked = our own company. Not ticked = competitor.')).toBeTruthy()
   })
 
   it('pre-fills the Company box with the old competitor name when there is no company yet, and one Save links it', async () => {

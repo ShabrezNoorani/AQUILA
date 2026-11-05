@@ -17,6 +17,7 @@ export type ListingInsert = {
   is_own: boolean
   source: ListingSource
   url: string | null
+  /** Old free-text owner name. Kept in the database, no longer shown or asked for; see company_id. */
   competitor_name: string | null
   active: boolean
   /** The company this listing belongs to (mt_companies.id), or null when unassigned. */
@@ -77,7 +78,8 @@ export type Snapshot = Partial<Omit<SnapshotInsert, 'method' | 'status'>> & {
 }
 
 /** Fields of mt_listings that the "Edit listing" form may change. */
-export type ListingUpdate = Pick<ListingInsert, 'name' | 'is_own' | 'source' | 'url' | 'competitor_name' | 'active' | 'company_id'>
+/** competitor_name is not here: the old column stays in the database but the app no longer changes it. */
+export type ListingUpdate = Pick<ListingInsert, 'name' | 'is_own' | 'source' | 'url' | 'active' | 'company_id'>
 
 /**
  * Fields of mt_snapshots that editing may change. listing_id, method, raw_html and raw_text are

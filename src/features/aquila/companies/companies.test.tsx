@@ -23,6 +23,9 @@ let companies: Company[]
 let listings: Partial<Listing>[]
 let tags: Tag[]
 let links: ListingTag[]
+/** Latest snapshot per listing (newest first), and their option prices. */
+let snapshots: { id: string; listing_id: string; captured_at: string; rating: number | null; review_count: number | null }[]
+let options: { snapshot_id: string; price_per_person: number | null }[]
 
 function respond(q: Query): Result {
   if (q.table === 'mt_companies') {
@@ -38,6 +41,14 @@ function respond(q: Query): Result {
   if (q.table === 'mt_listings') {
     if (has(q, 'update')) return { data: { id: 'L1', ...(callsOf(q, 'update')[0][0] as object) }, error: null }
     return { data: listings, error: null }
+  }
+  if (q.table === 'mt_snapshots') {
+    const [[, listingId]] = callsOf(q, 'eq') as [string, string][]
+    return { data: snapshots.filter((s) => s.listing_id === listingId).slice(0, 1), error: null }
+  }
+  if (q.table === 'mt_snapshot_options') {
+    const [[, snapshotId]] = callsOf(q, 'eq') as [string, string][]
+    return { data: options.filter((o) => o.snapshot_id === snapshotId), error: null }
   }
   return { data: [], error: null }
 }
@@ -68,6 +79,16 @@ beforeEach(() => {
     { listing_id: 'L2', tag_id: 'T1' }, { listing_id: 'L2', tag_id: 'P2' },
     { listing_id: 'L3', tag_id: 'T1' }, { listing_id: 'L3', tag_id: 'P1' },
     { listing_id: 'L4', tag_id: 'T1' }, { listing_id: 'L4', tag_id: 'P1' },
+  ]
+  snapshots = [
+    { id: 'S1', listing_id: 'L1', captured_at: '2026-10-01T00:00:00Z', rating: 4.6, review_count: 120 },
+    { id: 'S3', listing_id: 'L3', captured_at: '2026-10-02T00:00:00Z', rating: 4.9, review_count: 1 },
+  ]
+  options = [
+    { snapshot_id: 'S1', price_per_person: 89 },
+    { snapshot_id: 'S1', price_per_person: 59.5 },
+    { snapshot_id: 'S1', price_per_person: null },
+    { snapshot_id: 'S3', price_per_person: 45 },
   ]
   localStorage.clear()
   sessionStorage.clear()
@@ -182,7 +203,8 @@ describe('CompaniesPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'List' }))
     const table = await screen.findByRole('table', { name: 'Companies' })
     const row = (name: string) => within(table).getByText(name).closest('tr')!
-    expect(within(row('Rival Co')).getByText('Competitor')).toBeTruthy()
+    expect(within(row('Rival Co')).queryByText('OWN')).toBeNull()
+    expect(within(row('Rival Co')).queryByText(/competitor/i)).toBeNull()
     expect(within(row('Rival Co')).getByText('2')).toBeTruthy()
     expect(within(row('Scenic Zest Tours')).getByText('OWN')).toBeTruthy()
     expect(within(row('Scenic Zest Tours')).getByText('1')).toBeTruthy()
@@ -214,6 +236,7 @@ describe('CompaniesPage', () => {
   })
 
   it("shows one company's listings, with the OWN marker", async () => {
+    localStorage.setItem('aquila.company.view', 'list')
     render(<CompaniesPage companyId="C2" />)
     expect(await screen.findByRole('heading', { name: 'Scenic Zest Tours' })).toBeTruthy()
     expect(screen.getByText('OWN')).toBeTruthy()
@@ -223,6 +246,7 @@ describe('CompaniesPage', () => {
   })
 
   it('shows listings with no company under Unassigned', async () => {
+    localStorage.setItem('aquila.company.view', 'list')
     render(<CompaniesPage companyId="unassigned" />)
     expect(await screen.findByRole('heading', { name: 'Unassigned' })).toBeTruthy()
     const table = await screen.findByRole('table')
@@ -390,6 +414,7 @@ describe('CompaniesPage views, sorting and tag filter', () => {
     await screen.findByRole('group', { name: 'Filter by tag' })
     fireEvent.click(tag('Boat'))
     unmount()
+    localStorage.setItem('aquila.company.view', 'list')
     render(<CompaniesPage companyId="C1" />)
     const table = await screen.findByRole('table', { name: 'Listings for Rival Co' })
     expect(within(table).getAllByRole('link').map((a) => a.textContent)).toEqual(['Rival Safari'])
@@ -400,6 +425,7 @@ describe('CompaniesPage views, sorting and tag filter', () => {
 
   it('filters the Unassigned listings by the selected tags too', async () => {
     sessionStorage.setItem('aquila.companies.tags', JSON.stringify(['T2']))
+    localStorage.setItem('aquila.company.view', 'list')
     render(<CompaniesPage companyId="unassigned" />)
     expect(await screen.findByText(/no listings here have all the selected tags/i)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
@@ -439,6 +465,7 @@ describe('a listing with a company', () => {
     expect(within(table).queryByRole('link', { name: 'Unassigned' })).toBeNull()
     unmount()
 
+    localStorage.setItem('aquila.company.view', 'list')
     render(<CompaniesPage companyId="CW" />)
     const listingsTable = await screen.findByRole('table', { name: 'Listings for City Wonders Ltd' })
     expect(within(listingsTable).getByRole('link', { name: 'Notre-Dame Tour with Access to the Cathedral' })).toBeTruthy()
@@ -519,5 +546,101 @@ describe('trailing dots and tags of new kinds', () => {
     // Only Our Walk (Scenic Zest Tours) has both Bakery and Walking.
     expect(within(screen.getByRole('list', { name: 'Companies' })).getAllByRole('link').map((a) => a.textContent))
       .toEqual(['Scenic Zest Tours'])
+  })
+})
+
+// ---------- one company's listings: Library or List ----------
+
+describe("one company's listings as Library or List", () => {
+  const view = (name: 'Library' | 'List') => screen.getByRole('button', { name })
+  const cards = () => within(screen.getByRole('list', { name: 'Listings for Rival Co' })).getAllByRole('listitem')
+
+  it('shows Library and List buttons, with Library (cards) by default', async () => {
+    render(<CompaniesPage companyId="C1" />)
+    await screen.findByRole('list', { name: 'Listings for Rival Co' })
+    expect(view('Library').getAttribute('aria-pressed')).toBe('true')
+    expect(view('List').getAttribute('aria-pressed')).toBe('false')
+    expect(screen.queryByRole('table')).toBeNull()
+    expect(cards().map((c) => c.getAttribute('aria-label'))).toEqual(['Rival Safari', 'Rival Cruise'])
+  })
+
+  it('a card shows the title, company name, price from, rating, review count and tags', async () => {
+    render(<CompaniesPage companyId="C1" />)
+    const card = (await screen.findByRole('listitem', { name: 'Rival Safari' }))
+    expect(within(card).getByRole('link', { name: 'Rival Safari' }).getAttribute('href')).toBe('#/listings/L1')
+    expect(within(card).getByText('Rival Co')).toBeTruthy()
+    expect(await within(card).findByText('From 59.5')).toBeTruthy()
+    expect(within(card).getByText('4.6 ★ · 120 reviews')).toBeTruthy()
+    expect(within(card).getByText('Boat')).toBeTruthy()
+    expect(within(card).getByText('Paris')).toBeTruthy()
+    expect(within(card).queryByText('OWN')).toBeNull()
+    // A listing with no snapshot yet says so.
+    const empty = screen.getByRole('listitem', { name: 'Rival Cruise' })
+    expect(within(empty).getByText('No price yet')).toBeTruthy()
+    expect(within(empty).getByText('No rating yet')).toBeTruthy()
+  })
+
+  it('reads only the summary columns of the latest snapshot, never the saved page', async () => {
+    render(<CompaniesPage companyId="C1" />)
+    await screen.findByText('From 59.5')
+    const snap = queries.filter((q) => q.table === 'mt_snapshots')
+    expect(snap.length).toBeGreaterThan(0)
+    for (const q of snap) {
+      expect(callsOf(q, 'select')[0][0]).toBe('id, captured_at, rating, review_count')
+      expect(callsOf(q, 'order')[0]).toEqual(['captured_at', { ascending: false }])
+      expect(callsOf(q, 'limit')[0][0]).toBe(1)
+    }
+  })
+
+  it('cards of our own company carry the OWN badge', async () => {
+    render(<CompaniesPage companyId="C2" />)
+    const card = await screen.findByRole('listitem', { name: 'Our Walk' })
+    expect(within(card).getByText('OWN')).toBeTruthy()
+    expect(within(card).getByText('Scenic Zest Tours')).toBeTruthy()
+    expect(await within(card).findByText('From 45')).toBeTruthy()
+    expect(within(card).getByText('4.9 ★ · 1 review')).toBeTruthy()
+  })
+
+  it('switches to List (the table) and remembers the choice', async () => {
+    const { unmount } = render(<CompaniesPage companyId="C1" />)
+    await screen.findByRole('list', { name: 'Listings for Rival Co' })
+    fireEvent.click(view('List'))
+    expect(screen.getByRole('table', { name: 'Listings for Rival Co' })).toBeTruthy()
+    expect(screen.queryByRole('list', { name: 'Listings for Rival Co' })).toBeNull()
+    expect(localStorage.getItem('aquila.company.view')).toBe('list')
+    unmount()
+    render(<CompaniesPage companyId="C1" />)
+    expect(await screen.findByRole('table', { name: 'Listings for Rival Co' })).toBeTruthy()
+    expect(view('List').getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('the tag filter works in both views, and every selected tag must match', async () => {
+    render(<CompaniesPage companyId="C1" />)
+    await screen.findByRole('list', { name: 'Listings for Rival Co' })
+    const tag = (name: string) => within(screen.getByRole('group', { name: 'Filter by tag' })).getByRole('button', { name })
+    fireEvent.click(tag('Walking'))
+    expect(cards().map((c) => c.getAttribute('aria-label'))).toEqual(['Rival Cruise'])
+    fireEvent.click(tag('Paris'))
+    expect(screen.getByText(/no listings here have all the selected tags/i)).toBeTruthy()
+    fireEvent.click(tag('Paris'))
+    fireEvent.click(view('List'))
+    const table = screen.getByRole('table', { name: 'Listings for Rival Co' })
+    expect(within(table).getAllByRole('link').map((a) => a.textContent)).toEqual(['Rival Cruise'])
+    fireEvent.click(view('Library'))
+    expect(cards().map((c) => c.getAttribute('aria-label'))).toEqual(['Rival Cruise'])
+  })
+
+  it('still works when storage is blocked', async () => {
+    const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked') })
+    try {
+      render(<CompaniesPage companyId="C1" />)
+      await screen.findByRole('list', { name: 'Listings for Rival Co' })
+      fireEvent.click(view('List'))
+      expect(screen.getByRole('table', { name: 'Listings for Rival Co' })).toBeTruthy()
+    } finally {
+      spy.mockRestore()
+      set.mockRestore()
+    }
   })
 })

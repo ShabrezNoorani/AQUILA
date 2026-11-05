@@ -174,7 +174,7 @@ export default function AskPage() {
               )}
             </fieldset>
             <TextField id="ask-question" label="Question *" value={question} multiline rows={3}
-              placeholder="e.g. Which competitor tour has the best reviews?"
+              placeholder="e.g. Which company has the best-reviewed tour?"
               help="The answer only uses your saved listings, grouped by company, with their snapshots, timing rules and reviews."
               onChange={setQuestion} error={errors.question} />
             {askError && <FormError>Could not get an answer: {askError}</FormError>}

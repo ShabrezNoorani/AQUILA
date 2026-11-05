@@ -31,7 +31,6 @@ export type ListingForm = {
   is_own: boolean
   source: ListingSource
   url: string
-  competitor_name: string
   /** The company's name, as typed. It becomes company_id when the listing is saved. */
   company: string
 }
@@ -41,7 +40,6 @@ export const emptyListingForm = (): ListingForm => ({
   is_own: false,
   source: 'manual',
   url: '',
-  competitor_name: '',
   company: '',
 })
 
@@ -70,7 +68,9 @@ export function listingFormToRow(
       is_own: form.is_own,
       source: form.source,
       url: url || null,
-      competitor_name: textOrNull(form.competitor_name),
+      // The old competitor_name column is kept in the database but no longer used: the company
+      // is the only place that says who owns a listing. New listings leave it empty.
+      competitor_name: null,
       active: true,
     },
   }
@@ -88,7 +88,6 @@ export function listingRowToForm(listing: Listing, companies: Company[]): Listin
     is_own: company ? company.is_own : listing.is_own,
     source: listing.source,
     url: listing.url ?? '',
-    competitor_name: listing.competitor_name ?? '',
     company: company?.name ?? normaliseCompanyName(listing.competitor_name ?? ''),
   }
 }

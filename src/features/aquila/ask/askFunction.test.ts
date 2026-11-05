@@ -224,7 +224,7 @@ describe('a full answer', () => {
     expect(prompt).toMatch(/never guess/i)
   })
 
-  it('sends the data grouped by company, with all tags and kinds, ownership, latest snapshot, options, timing rules and nameless reviews', async () => {
+  it('sends the data grouped by company, with all tags and kinds, the OWN flag, latest snapshot, options, timing rules and nameless reviews', async () => {
     await handler()(post({ question: 'Prices?', tag_ids: ['P1', 'T1'] }))
     const ctx = sentContext()
     expect(ctx.chosen_tags).toEqual([{ kind: 'place', name: 'Dubai' }, { kind: 'type', name: 'Safari' }])
@@ -232,7 +232,7 @@ describe('a full answer', () => {
       ['Scenic Zest Tours', true], ['Rival Co', false],
     ])
     const rival = allListings().find((l: { name: string }) => l.name === 'Rival Safari')
-    expect(rival.ownership).toBe('competitor')
+    expect(rival.own).toBe(false)
     expect(rival.tags).toEqual([{ kind: 'place', name: 'Dubai' }, { kind: 'type', name: 'Safari' }])
     expect(rival.latest_snapshot.snapshot_id).toBe('S2new')
     expect(rival.latest_snapshot.captured_at).toBe('2026-10-30T10:00:00Z')
@@ -241,7 +241,7 @@ describe('a full answer', () => {
     expect(rival.timing_rules).toEqual([{ rule: 'Sunset departures only', created_at: '2026-10-01' }])
     expect(rival.reviews).toEqual([{ stars: 2, text: 'Late pickup' }])
     const ours = allListings().find((l: { name: string }) => l.name === 'Our Safari')
-    expect(ours.ownership).toBe('own')
+    expect(ours.own).toBe(true)
     expect(ours.reviews).toEqual([])
   })
 
@@ -259,9 +259,24 @@ describe('a full answer', () => {
     })
   })
 
-  it('labels the OWN company in the prompt so answers compare us with competitors', () => {
-    expect(SYSTEM_PROMPT).toMatch(/"own": true when it is the owner's own company \(OWN\)/)
+  it('tells the model each listing has a company, OWN means our own company, any other is a competitor, and to use the OWN flag', () => {
+    expect(SYSTEM_PROMPT).toMatch(/each listing has a company name/i)
+    expect(SYSTEM_PROMPT).toMatch(/"own": true is marked OWN: it is the owner's own company\. Any other company is a competitor\./)
+    expect(SYSTEM_PROMPT).toMatch(/always use the OWN flag \("own"\) to tell the owner's listings from competitors' listings/i)
     expect(SYSTEM_PROMPT).toMatch(/label the owner's listings as OWN and name each competitor company/i)
+    expect(SYSTEM_PROMPT).not.toMatch(/competitor[ _]name/i)
+  })
+
+  it('never reads or sends the old competitor name', async () => {
+    tables.mt_listings = (tables.mt_listings as Record<string, unknown>[]).map((l) => ({ ...l, competitor_name: 'Old Text Ltd' }))
+    await handler()(post({ question: 'How do we compare?', tag_ids: ['P1', 'T1'] }))
+    const reads = calls.filter((c) => c.url.pathname === '/rest/v1/mt_listings')
+    for (const r of reads) expect(r.url.searchParams.get('select')).not.toMatch(/competitor/)
+    const text: string = sentToGemini().contents[0].parts[0].text
+    expect(text).not.toMatch(/competitor_name|Old Text Ltd/)
+    for (const l of allListings()) expect(Object.keys(l)).toEqual(
+      ['listing_id', 'name', 'own', 'company', 'tags', 'latest_snapshot', 'timing_rules', 'reviews'],
+    )
   })
 
   it('does not read mt_companies when no chosen listing has a company', async () => {
@@ -429,10 +444,10 @@ describe('buildContext', () => {
       ],
       companies: [{ id: 'OWN1', name: 'Scenic Zest Tours', is_own: true }],
     })
-    const byName = Object.fromEntries(ctx.companies.flatMap((g) => g.listings).map((l) => [l.name, [l.company, l.ownership]]))
+    const byName = Object.fromEntries(ctx.companies.flatMap((g) => g.listings).map((l) => [l.name, [l.company, l.own]]))
     expect(byName).toEqual({
-      Ghost: [null, 'competitor'],
-      Ours: [{ name: 'Scenic Zest Tours', own: true }, 'own'],
+      Ghost: [null, false],
+      Ours: [{ name: 'Scenic Zest Tours', own: true }, true],
     })
   })
 })

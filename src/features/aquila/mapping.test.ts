@@ -15,7 +15,6 @@ describe('listingFormToRow', () => {
       is_own: false,
       source: 'viator',
       url: ' https://www.viator.com/tours/x ',
-      competitor_name: ' Rival Tours ',
       company: ' Rival Co ',
     }
     expect(listingFormToRow(form)).toEqual({
@@ -25,10 +24,14 @@ describe('listingFormToRow', () => {
         is_own: false,
         source: 'viator',
         url: 'https://www.viator.com/tours/x',
-        competitor_name: 'Rival Tours',
+        competitor_name: null,
         active: true,
       },
     })
+  })
+
+  it('has one Company field and no separate competitor name field', () => {
+    expect(Object.keys(emptyListingForm()).sort()).toEqual(['company', 'is_own', 'name', 'source', 'url'])
   })
 
   it('uses the exact mt_listings column names', () => {

@@ -70,7 +70,7 @@ export default function ListingsPage() {
       {error && <FormError>Could not load listings: {error}</FormError>}
       {!error && !listings && <p className="text-sm text-ink-3">Loading…</p>}
       {listings && listings.length === 0 && (
-        <EmptyState title="No listings yet." description="Add your own listing or a competitor’s to start tracking it." />
+        <EmptyState title="No listings yet." description="Add a listing for your own company or any other company to start tracking it." />
       )}
 
       {listings && listings.length > 0 && filterTags.length > 0 && (
