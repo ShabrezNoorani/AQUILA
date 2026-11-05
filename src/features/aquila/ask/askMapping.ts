@@ -1,6 +1,7 @@
 // Pure helpers for the Ask page: turning chosen tags and a question into the function request,
 // reading the function's reply, and describing past answers.
 
+import { groupByKind, kindLabel } from '../tags/tagMapping'
 import type { Listing, Tag } from '../types'
 
 /** What the page sends to the aquila-ask function. */
@@ -20,32 +21,29 @@ export type AskResponse = {
   save_error?: string
 }
 
-export type AskForm = { question: string; placeIds: string[]; typeIds: string[] }
+export type AskForm = { question: string; tagIds: string[] }
 
 export const MAX_QUESTION = 2000
 
-export type AskErrors = Partial<Record<'question' | 'places', string>>
+export type AskErrors = Partial<Record<'question', string>>
 
 /**
- * Builds the request: one or more place tags, any number of type tags, and a question.
- * Place and type ids go together in tag_ids (places first). Ids that are not tags of the
- * right kind are dropped.
+ * Builds the request: a question and any number of tags of any kind. No tags means all
+ * listings; with tags, only listings carrying all of them are used. Unknown ids are dropped.
  */
 export function buildAskRequest(form: AskForm, tags: Tag[]):
   | { ok: true; request: AskRequest }
   | { ok: false; errors: AskErrors } {
-  const kindOf = new Map(tags.map((t) => [t.id, t.kind]))
-  const places = [...new Set(form.placeIds)].filter((id) => kindOf.get(id) === 'place')
-  const types = [...new Set(form.typeIds)].filter((id) => kindOf.get(id) === 'type')
+  const known = new Set(tags.map((t) => t.id))
+  const tagIds = [...new Set(form.tagIds)].filter((id) => known.has(id))
   const question = form.question.trim()
 
   const errors: AskErrors = {}
-  if (places.length === 0) errors.places = 'Choose at least one place tag.'
   if (!question) errors.question = 'Type a question.'
   else if (question.length > MAX_QUESTION) errors.question = `Keep the question under ${MAX_QUESTION} characters.`
   if (Object.keys(errors).length) return { ok: false, errors }
 
-  return { ok: true, request: { question, tag_ids: [...places, ...types] } }
+  return { ok: true, request: { question, tag_ids: tagIds } }
 }
 
 /** Checks the function's reply has the fields the page shows. */
@@ -67,14 +65,13 @@ export function parseAskResponse(data: unknown): AskResponse {
   }
 }
 
-/** Tag names for a past answer, split by kind. Unknown (deleted) tags are counted, not named. */
+/** Tag names for a past answer, grouped by kind. Unknown (deleted) tags are counted, not named. */
 export function describeTags(tagIds: string[] | null, tags: Tag[]) {
   const byId = new Map(tags.map((t) => [t.id, t]))
   const ids = tagIds ?? []
   const known = ids.map((id) => byId.get(id)).filter((t): t is Tag => !!t)
   return {
-    places: known.filter((t) => t.kind === 'place').map((t) => t.name),
-    types: known.filter((t) => t.kind === 'type').map((t) => t.name),
+    groups: groupByKind(known).map((g) => ({ kind: kindLabel(g.kind), names: g.tags.map((t) => t.name) })),
     missing: ids.length - known.length,
   }
 }

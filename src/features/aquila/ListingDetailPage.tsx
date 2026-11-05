@@ -4,6 +4,7 @@ import {
   countSnapshots,
   createCompany,
   deleteListing,
+  setCompanyOwn,
   fetchCompanies,
   fetchListing,
   fetchListingTagIds,
@@ -12,12 +13,12 @@ import {
   updateListing,
 } from './api'
 import CompanyField from './companies/CompanyField'
-import { listingFormToRow, listingRowToForm, normaliseCompanyName } from './mapping'
+import { findCompanyByName, listingFormToRow, listingRowToForm, normaliseCompanyName } from './mapping'
 import ReviewsSection from './reviews/ReviewsSection'
 import { hrefFor, navigate } from './router'
 import SnapshotForm from './SnapshotForm'
 import SnapshotList from './SnapshotList'
-import { listingTagsError, withTag } from './tags/tagMapping'
+import { withTag } from './tags/tagMapping'
 import TagPicker, { TagChips } from './tags/TagPicker'
 import { LISTING_SOURCES, SOURCE_LABELS, type Company, type Listing, type ListingSource, type Tag } from './types'
 import {
@@ -38,11 +39,20 @@ import {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
-type EditForm = { name: string; source: ListingSource; url: string; competitor_name: string; active: boolean; company: string }
+type EditForm = {
+  name: string
+  source: ListingSource
+  url: string
+  competitor_name: string
+  active: boolean
+  company: string
+  is_own: boolean
+}
 
 /**
- * Edits name, company, source, URL, competitor name and active. Own/competitor is not editable here.
+ * Edits name, company, OWN, source, URL, competitor name and active.
  * Only shown once the companies have loaded, so the company box never starts wrongly empty.
+ * A listing with no company yet starts with its old competitor name in the Company box.
  */
 function EditListingForm({ listing, companies, onSaved, onCancel }: {
   listing: Listing
@@ -50,13 +60,17 @@ function EditListingForm({ listing, companies, onSaved, onCancel }: {
   onSaved: (updated: Listing, company: Company | null) => void
   onCancel: () => void
 }) {
-  const [form, setForm] = useState<EditForm>({
-    name: listing.name,
-    source: listing.source,
-    url: listing.url ?? '',
-    competitor_name: listing.competitor_name ?? '',
-    active: listing.active,
-    company: listingRowToForm(listing, companies).company,
+  const [form, setForm] = useState<EditForm>(() => {
+    const start = listingRowToForm(listing, companies)
+    return {
+      name: start.name,
+      source: start.source,
+      url: start.url,
+      competitor_name: start.competitor_name,
+      active: listing.active,
+      company: start.company,
+      is_own: start.is_own,
+    }
   })
   const [errors, setErrors] = useState<Partial<Record<keyof EditForm, string>>>({})
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -67,7 +81,7 @@ function EditListingForm({ listing, companies, onSaved, onCancel }: {
     e.preventDefault()
     setSaveError(null)
     // Same checks as a new listing: name required, known source, http(s) URL.
-    const mapped = listingFormToRow({ ...form, is_own: listing.is_own })
+    const mapped = listingFormToRow(form)
     if (!mapped.ok) {
       setErrors(mapped.errors)
       return
@@ -77,12 +91,17 @@ function EditListingForm({ listing, companies, onSaved, onCancel }: {
     try {
       const { name, source, url, competitor_name } = mapped.row
       // An empty company box leaves the listing unassigned. Otherwise the company with the same
-      // name (ignoring case and spaces) is reused, or created. Name and company save in one update.
-      const company = normaliseCompanyName(form.company)
-        ? (await createCompany(form.company, listing.is_own)).company
-        : null
+      // name (ignoring capitals, extra spaces and trailing dots) is reused, or created with the
+      // OWN tick. If the tick differs from an existing company's OWN marker, the company is updated,
+      // because OWN belongs to the company.
+      let company: Company | null = null
+      if (normaliseCompanyName(form.company)) {
+        const found = await createCompany(form.company, form.is_own)
+        company = found.company
+        if (found.existed && found.company.is_own !== form.is_own) company = await setCompanyOwn(company.id, form.is_own)
+      }
       const updated = await updateListing(listing.id, {
-        name, source, url, competitor_name, active: form.active, company_id: company?.id ?? null,
+        name, is_own: form.is_own, source, url, competitor_name, active: form.active, company_id: company?.id ?? null,
       })
       onSaved(updated, company)
     } catch (err) {
@@ -98,7 +117,17 @@ function EditListingForm({ listing, companies, onSaved, onCancel }: {
           onChange={(v) => set('name', v)} error={errors.name} />
         <CompanyField id="edit-listing-company" label="Company" value={form.company} companies={companies}
           help="Pick an existing company or type a new one. Leave empty for unassigned."
-          onChange={(v) => set('company', v)} />
+          onChange={(v) => {
+            set('company', v)
+            // Picking an existing company shows its OWN marker.
+            const match = findCompanyByName(companies, v)
+            if (match) set('is_own', match.is_own)
+          }} />
+        <label className="flex items-center gap-2 text-sm font-medium text-ink">
+          <input type="checkbox" className="h-4 w-4 accent-ink" checked={form.is_own}
+            onChange={(e) => set('is_own', e.target.checked)} />
+          This is ours (OWN)
+        </label>
         <div className="grid gap-5 sm:grid-cols-2">
           <Field id="edit-listing-source" label="Source" error={errors.source}>
             <select id="edit-listing-source" value={form.source} className={inputClass}
@@ -128,14 +157,13 @@ function EditListingForm({ listing, companies, onSaved, onCancel }: {
   )
 }
 
-/** Shows a listing's tags and edits them. Saving needs at least one type tag and at least one place tag. */
+/** Shows a listing's tags and edits them. Any number of tags of any kind is allowed. */
 function ListingTagsSection({ listingId }: { listingId: string }) {
   const [tags, setTags] = useState<Tag[] | null>(null)
   const [saved, setSaved] = useState<string[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<string[]>([])
-  const [ruleError, setRuleError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -159,7 +187,6 @@ function ListingTagsSection({ listingId }: { listingId: string }) {
   function startEditing() {
     // Only ids of known tags are carried into the editor.
     setDraft(current.map((t) => t.id))
-    setRuleError(null)
     setSaveError(null)
     setEditing(true)
   }
@@ -167,9 +194,6 @@ function ListingTagsSection({ listingId }: { listingId: string }) {
   async function save() {
     if (!tags) return
     setSaveError(null)
-    const problem = listingTagsError(draft, tags)
-    setRuleError(problem)
-    if (problem) return
     setBusy(true)
     try {
       await setListingTags(listingId, draft)
@@ -190,11 +214,10 @@ function ListingTagsSection({ listingId }: { listingId: string }) {
       {tags && !editing && <TagChips tags={current} />}
       {tags && editing && (
         <div className="space-y-4">
-          <TagPicker idPrefix="edit-listing" tags={tags} selected={draft} error={ruleError} disabled={busy}
+          <TagPicker idPrefix="edit-listing" tags={tags} selected={draft} disabled={busy}
             onTagCreated={(tag) => setTags((prev) => withTag(prev ?? [], tag))}
             onChange={(ids) => {
               setDraft(ids)
-              setRuleError(null)
             }} />
           {saveError && <FormError>Could not save tags: {saveError}</FormError>}
           <div className="flex justify-end gap-2">
@@ -281,16 +304,15 @@ export default function ListingDetailPage({ id }: { id: string }) {
     <Page title={listing.name} back={{ href: hrefFor.listings(), label: '← All listings' }}
       meta={(
         <>
-          {/* OWN only when the listing's company is marked OWN; nothing for other companies. */}
-          {company?.is_own && <Badge tone="strong">OWN</Badge>}
-          {company && (
+          {/* The company, from company_id only, with OWN when it is marked OWN. */}
+          {company ? (
             <a href={hrefFor.company(company.id)} className="font-medium text-ink-2 hover:text-accent">
               {company.name}
             </a>
-          )}
+          ) : companies && <span className="text-ink-3">Unassigned</span>}
+          {company?.is_own && <Badge tone="strong">OWN</Badge>}
           <Badge tone={listing.active ? 'positive' : 'neutral'}>{listing.active ? 'Active' : 'Inactive'}</Badge>
           <span>{SOURCE_LABELS[listing.source] ?? listing.source}</span>
-          {listing.competitor_name && <span>· {listing.competitor_name}</span>}
         </>
       )}
       actions={(

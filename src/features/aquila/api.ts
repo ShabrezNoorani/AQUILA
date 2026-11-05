@@ -139,7 +139,7 @@ export async function deleteReview(id: string): Promise<void> {
 
 // ---------- tags ----------
 
-/** All tags, sorted by name. Rows with an unknown kind are left out. */
+/** All tags, sorted by name. Rows with a blank kind are left out. */
 export async function fetchTags(): Promise<Tag[]> {
   const rows = unwrap<Tag[] | null>(
     await supabase.from(TAGS).select('*').order('name', { ascending: true }),
@@ -148,9 +148,10 @@ export async function fetchTags(): Promise<Tag[]> {
 }
 
 /**
- * Creates a tag. The name is trimmed. If a tag of the same kind with the same name already
- * exists (ignoring capitalisation), that tag is returned and nothing is written. A tag of the
- * other kind never counts as a match.
+ * Creates a tag of any kind; a new kind needs nothing else. The name is trimmed and the kind is
+ * stored lower-case. If a tag of the same kind with the same name already exists (ignoring
+ * capitalisation and extra spaces), that tag is returned and nothing is written. A tag of
+ * another kind never counts as a match.
  */
 export async function createTag(name: string, kind: TagKind): Promise<{ tag: Tag; existed: boolean }> {
   const checked = tagFormToRow(name, kind)
@@ -269,6 +270,11 @@ export async function renameCompany(id: string, name: string): Promise<Company> 
   const checked = companyRenameCheck(await fetchCompanies(), id, name)
   if (!checked.ok) throw new Error(checked.error)
   return unwrap<Company>(await supabase.from(COMPANIES).update({ name: checked.name }).eq('id', id).select().single())
+}
+
+/** Marks a company as ours (OWN) or not. */
+export async function setCompanyOwn(id: string, isOwn: boolean): Promise<Company> {
+  return unwrap<Company>(await supabase.from(COMPANIES).update({ is_own: isOwn }).eq('id', id).select().single())
 }
 
 /** Puts a listing under a company, or takes it out of any company when companyId is null. */

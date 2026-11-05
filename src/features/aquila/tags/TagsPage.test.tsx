@@ -85,9 +85,9 @@ describe('createTag', () => {
 })
 
 describe('fetchTags', () => {
-  it('drops rows whose kind is not type or place', async () => {
-    tags = [...tags, { id: 'X', name: 'Odd', kind: 'region' as never }]
-    expect((await fetchTags()).map((t) => t.id)).toEqual(['T1', 'P1'])
+  it('keeps tags of any kind, and drops only rows with a blank kind', async () => {
+    tags = [...tags, { id: 'R', name: 'Coast', kind: 'region' }, { id: 'X', name: 'Odd', kind: '  ' }]
+    expect((await fetchTags()).map((t) => t.id)).toEqual(['T1', 'P1', 'R'])
   })
 })
 
@@ -140,6 +140,7 @@ describe('TagsPage', () => {
   it('says the tag already exists instead of adding a duplicate', async () => {
     render(<TagsPage />)
     fireEvent.change(await screen.findByLabelText(/tag name/i), { target: { value: 'SAFARI' } })
+    fireEvent.change(screen.getByLabelText(/kind/i), { target: { value: ' Type ' } })
     fireEvent.click(screen.getByRole('button', { name: /add tag/i }))
     expect(await screen.findByText(/“safari” already exists/i)).toBeTruthy()
     expect(inserts('mt_tags')).toHaveLength(0)
@@ -154,6 +155,19 @@ describe('TagsPage', () => {
     expect(await screen.findByText(/added “safari”/i)).toBeTruthy()
     expect(within(screen.getByRole('list', { name: 'Place tags' })).getByText('Safari')).toBeTruthy()
     expect(within(screen.getByRole('list', { name: 'Type tags' })).getByText('Safari')).toBeTruthy()
+  })
+
+  it('creates a tag of a new kind, typed in the kind box, and lists it under that kind', async () => {
+    render(<TagsPage />)
+    fireEvent.change(await screen.findByLabelText(/tag name/i), { target: { value: 'Bakery' } })
+    const kind = screen.getByLabelText(/kind/i)
+    expect(kind.tagName).toBe('INPUT')
+    expect([...document.querySelectorAll('#tag-kinds option')].map((o) => o.getAttribute('value'))).toEqual(['place', 'type'])
+    fireEvent.change(kind, { target: { value: 'Food' } })
+    fireEvent.click(screen.getByRole('button', { name: /add tag/i }))
+    expect(await screen.findByText(/added “bakery”/i)).toBeTruthy()
+    expect(within(screen.getByRole('list', { name: 'Food tags' })).getByText('Bakery')).toBeTruthy()
+    expect(callsOf(inserts('mt_tags')[0], 'insert')[0][0]).toEqual({ name: 'Bakery', kind: 'food' })
   })
 
   it('shows an error for a blank name and saves nothing', async () => {

@@ -32,25 +32,39 @@ const rpcCalls = () => vi.mocked(supabase.rpc).mock.calls as unknown as [string,
 const inserts = () => queries.filter((q) => callsOf(q, 'insert').length > 0)
 
 describe('ListingsPage', () => {
-  it('shows name, own/competitor, source and active status for each listing', async () => {
-    respond = () => ({
-      data: [
-        { id: '1', name: 'Our Safari', is_own: true, source: 'viator', active: true },
-        { id: '2', name: 'Rival Safari', is_own: false, source: 'tripadvisor', active: false },
-      ],
-      error: null,
-    })
+  it('shows name, company with OWN badge (or Unassigned), source and active status for each listing', async () => {
+    respond = (q) => {
+      if (q.table === 'mt_companies') {
+        return { data: [{ id: 'C1', name: 'Scenic Zest Tours', is_own: true }, { id: 'C2', name: 'Rival Co', is_own: false }], error: null }
+      }
+      if (q.table !== 'mt_listings') return { data: [], error: null }
+      return {
+        data: [
+          { id: '1', name: 'Our Safari', is_own: true, source: 'viator', active: true, company_id: 'C1' },
+          { id: '2', name: 'Rival Safari', is_own: false, source: 'tripadvisor', active: false, company_id: 'C2' },
+          { id: '3', name: 'Old One', is_own: false, source: 'manual', active: true, company_id: null, competitor_name: 'Someone' },
+        ],
+        error: null,
+      }
+    }
     render(<ListingsPage />)
+    expect(await screen.findByRole('columnheader', { name: 'Company' })).toBeTruthy()
 
     const own = (await screen.findByText('Our Safari')).closest('tr')!
-    expect(within(own).getByText('Own')).toBeTruthy()
+    expect(await within(own).findByRole('link', { name: 'Scenic Zest Tours' })).toBeTruthy()
+    expect(within(own).getByText('OWN')).toBeTruthy()
     expect(within(own).getByText('viator')).toBeTruthy()
     expect(within(own).getByText('Active')).toBeTruthy()
 
     const rival = screen.getByText('Rival Safari').closest('tr')!
-    expect(within(rival).getByText('Competitor')).toBeTruthy()
+    expect(within(rival).getByRole('link', { name: 'Rival Co' }).getAttribute('href')).toBe('#/companies/C2')
+    expect(within(rival).queryByText('OWN')).toBeNull()
+    expect(within(rival).queryByText('Competitor')).toBeNull()
     expect(within(rival).getByText('tripadvisor')).toBeTruthy()
     expect(within(rival).getByText('Inactive')).toBeTruthy()
+
+    const old = screen.getByText('Old One').closest('tr')!
+    expect(within(old).getByText('Unassigned')).toBeTruthy()
   })
 
   it('shows an empty state', async () => {

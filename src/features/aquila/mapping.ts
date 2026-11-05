@@ -76,15 +76,20 @@ export function listingFormToRow(
   }
 }
 
-/** A listing as form text. The company name comes from its company_id, or '' when unassigned. */
+/**
+ * A listing as form text. The company comes from its company_id. A listing with no company yet
+ * gets its old free-text competitor_name instead, so one Save links it. OWN follows the linked
+ * company when there is one, otherwise the listing's own is_own.
+ */
 export function listingRowToForm(listing: Listing, companies: Company[]): ListingForm {
+  const company = companies.find((c) => c.id === listing.company_id)
   return {
     name: listing.name,
-    is_own: listing.is_own,
+    is_own: company ? company.is_own : listing.is_own,
     source: listing.source,
     url: listing.url ?? '',
     competitor_name: listing.competitor_name ?? '',
-    company: companies.find((c) => c.id === listing.company_id)?.name ?? '',
+    company: company?.name ?? normaliseCompanyName(listing.competitor_name ?? ''),
   }
 }
 
@@ -95,10 +100,14 @@ export function normaliseCompanyName(name: string): string {
   return name.trim().replace(/\s+/g, ' ')
 }
 
-/** Key used to compare company names: trimmed, single-spaced, ignoring capitalisation. */
-export const companyNameKey = (name: string) => normaliseCompanyName(name).toLocaleLowerCase()
+/**
+ * Key used to compare company names: trimmed, single-spaced, ignoring capitalisation and
+ * trailing dots, so "City Wonders Ltd." and "city  wonders ltd" are the same company.
+ */
+export const companyNameKey = (name: string) =>
+  normaliseCompanyName(name).replace(/[.\s]+$/, '').toLocaleLowerCase()
 
-/** The company whose name matches, ignoring capitalisation and extra spaces. */
+/** The company whose name matches, ignoring capitalisation, extra spaces and trailing dots. */
 export function findCompanyByName(companies: Company[], name: string): Company | undefined {
   const key = companyNameKey(name)
   return key ? companies.find((c) => companyNameKey(c.name) === key) : undefined

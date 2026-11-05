@@ -5,7 +5,9 @@
 //  2. Reads listing data with the caller's own token, so row-level security applies.
 //     Only these tables are read: mt_listings, mt_listing_tags, mt_tags, mt_snapshots,
 //     mt_snapshot_options, mt_timing_rules, mt_reviews, mt_companies.
-//  3. Groups the data by the chosen place tags and asks Gemini.
+//  3. Uses the listings that carry ALL the chosen tags (any kinds; no tags = every listing),
+//     groups them by company, sends each listing's company, OWN marker and all its tags with
+//     their kinds, and asks Gemini.
 //  4. Saves one row to mt_suggestions and returns the answer with the listing and snapshot ids used.
 //
 // It talks to Supabase and Gemini with plain fetch and has no imports, so the same code runs on
@@ -47,8 +49,10 @@ const SNAPSHOT_COLUMNS = [
 
 export const SYSTEM_PROMPT = [
   'You answer questions about tour listings for the owner of a tour business.',
-  'Use only the JSON data you are given. It is grouped by the place tags the owner chose.',
+  'Use only the JSON data you are given. It is grouped by company: "companies" is a list of groups, each with the company name, "own", and that company\'s listings. The group with "company": null holds listings that have no company (Unassigned).',
   'Each listing has a "company": its name, and "own": true when it is the owner\'s own company (OWN). Every other company is a competitor; "company" is null when the listing has no company.',
+  'Each listing has all its tags, each with a "kind" (chosen by the owner, for example type or place) and a "name". Use tags only as given.',
+  'When the question is about companies, for example "which competitor tour has the best reviews?", compare the company groups using their listings\' reviews, ratings and prices.',
   'Rules:',
   '- When comparing, label the owner\'s listings as OWN and name each competitor company, so it is clear which is "us" and which is "them".',
   '- Cite every listing you rely on by its exact name, and give the capture date (captured_at) of the snapshot you used, e.g. "Desert Safari (captured 2026-10-30)".',
@@ -156,22 +160,24 @@ export type ListingContext = {
   ownership: 'own' | 'competitor'
   /** The listing's company, and whether it is our own (OWN). null when it has no company. */
   company: { name: string; own: boolean } | null
+  /** Every tag on the listing, of every kind. */
   tags: { kind: string; name: string }[]
   latest_snapshot: (Row & { snapshot_id: string; captured_at: string | null; options: Omit<OptionRow, 'snapshot_id'>[] }) | null
   timing_rules: Row[]
   reviews: { stars: unknown; text: unknown }[]
 }
 
+/** One company and its listings. company is null for listings without a company. */
+export type CompanyGroup = { company: string | null; own: boolean; listings: ListingContext[] }
+
 export type AskContext = {
-  chosen_tags: { places: string[]; types: string[] }
-  groups: { place_tag: string; listings: ListingContext[] }[]
+  /** The tags the owner chose; every listing sent carries all of them. Empty means every listing. */
+  chosen_tags: { kind: string; name: string }[]
+  companies: CompanyGroup[]
 }
 
-/**
- * Listings that carry at least one chosen place tag and, when type tags were chosen,
- * at least one of those types.
- */
-export function matchListingIds(links: { listing_id: string; tag_id: string }[], placeIds: string[], typeIds: string[]): string[] {
+/** Listings that carry ALL the chosen tags, of any kinds. Needs at least one chosen tag. */
+export function matchListingIds(links: { listing_id: string; tag_id: string }[], chosenIds: string[]): string[] {
   const byListing = new Map<string, Set<string>>()
   for (const l of links) {
     const set = byListing.get(l.listing_id) ?? new Set<string>()
@@ -180,19 +186,20 @@ export function matchListingIds(links: { listing_id: string; tag_id: string }[],
   }
   const out: string[] = []
   for (const [listingId, ids] of byListing) {
-    const place = placeIds.some((id) => ids.has(id))
-    const type = typeIds.length === 0 || typeIds.some((id) => ids.has(id))
-    if (place && type) out.push(listingId)
+    if (chosenIds.length > 0 && chosenIds.every((id) => ids.has(id))) out.push(listingId)
   }
   return out.sort()
 }
 
-/** Puts the data together, grouped by chosen place tag. Reviews keep only stars and text. */
+/**
+ * Puts the data together, grouped by company: our own (OWN) companies first, then competitors
+ * by name, then listings with no company. Each listing carries all its tags with their kinds.
+ * Reviews keep only stars and text.
+ */
 export function buildContext(input: {
   tags: Tag[]
   links: { listing_id: string; tag_id: string }[]
-  placeIds: string[]
-  typeIds: string[]
+  chosenIds: string[]
   listings: ListingRow[]
   /** Companies of the listings. Optional so older callers still work; missing means no company. */
   companies?: CompanyRow[]
@@ -203,7 +210,6 @@ export function buildContext(input: {
 }): AskContext {
   const tagById = new Map(input.tags.map((t) => [t.id, t]))
   const companyById = new Map((input.companies ?? []).map((c) => [c.id, c]))
-  const name = (id: string) => tagById.get(id)?.name ?? id
 
   // Snapshots arrive newest first; keep the first one per listing.
   const latest = new Map<string, SnapshotRow>()
@@ -229,7 +235,7 @@ export function buildContext(input: {
     return {
       listing_id: l.id,
       name: l.name,
-      ownership: l.is_own ? 'own' : 'competitor',
+      ownership: (companyOf(l)?.own ?? l.is_own) ? 'own' : 'competitor',
       company: companyOf(l),
       tags: input.links
         .filter((k) => k.listing_id === l.id && tagById.has(k.tag_id))
@@ -244,14 +250,21 @@ export function buildContext(input: {
     }
   }
 
-  const tagsOf = (listingId: string) => new Set(input.links.filter((k) => k.listing_id === listingId).map((k) => k.tag_id))
-  const listings = [...input.listings].sort((a, b) => a.name.localeCompare(b.name))
+  const listings = [...input.listings].sort((a, b) => a.name.localeCompare(b.name)).map(contextFor)
+  const groups = new Map<string, CompanyGroup>()
+  for (const l of listings) {
+    const key = l.company ? `c:${l.company.name}` : 'none'
+    const group = groups.get(key) ?? { company: l.company?.name ?? null, own: l.company?.own ?? false, listings: [] }
+    group.listings.push(l)
+    groups.set(key, group)
+  }
+  const rank = (g: CompanyGroup) => (g.company === null ? 2 : g.own ? 0 : 1)
   return {
-    chosen_tags: { places: input.placeIds.map(name), types: input.typeIds.map(name) },
-    groups: input.placeIds.map((placeId) => ({
-      place_tag: name(placeId),
-      listings: listings.filter((l) => tagsOf(l.id).has(placeId)).map(contextFor),
-    })),
+    chosen_tags: input.chosenIds
+      .map((id) => tagById.get(id))
+      .filter((t): t is Tag => !!t)
+      .map((t) => ({ kind: t.kind, name: t.name })),
+    companies: [...groups.values()].sort((a, b) => rank(a) - rank(b) || (a.company ?? '').localeCompare(b.company ?? '')),
   }
 }
 
@@ -295,16 +308,20 @@ export function createHandler(deps: Deps) {
       }
       const inList = (ids: string[]) => `in.(${ids.join(',')})`
 
-      // Tags decide which chosen ids are places and which are types.
+      // Tags of any kind may be chosen. Ids of deleted tags are dropped; if every chosen tag is
+      // gone, the question is refused rather than silently widened to every listing.
       const tags = await read<Tag>('mt_tags', { select: 'id,kind,name' })
-      const known = new Map(tags.map((t) => [t.id, t]))
-      const placeIds = request.tag_ids.filter((id) => known.get(id)?.kind === 'place')
-      const typeIds = request.tag_ids.filter((id) => known.get(id)?.kind === 'type')
-      if (placeIds.length === 0) throw new HttpError(400, 'Choose at least one place tag.')
+      const known = new Set(tags.map((t) => t.id))
+      const tagIds = request.tag_ids.filter((id) => known.has(id))
+      if (request.tag_ids.length > 0 && tagIds.length === 0) {
+        throw new HttpError(400, 'The chosen tags no longer exist. Choose again.')
+      }
 
       const links = await read<{ listing_id: string; tag_id: string }>('mt_listing_tags', { select: 'listing_id,tag_id' })
-      const ids = matchListingIds(links, placeIds, typeIds)
-      const tagIds = [...placeIds, ...typeIds]
+      // No tags chosen: every listing. Otherwise: listings with ALL the chosen tags.
+      const ids = tagIds.length
+        ? matchListingIds(links, tagIds)
+        : (await read<{ id: string }>('mt_listings', { select: 'id' })).map((l) => l.id).sort()
 
       const save = async (row: { answer: string | null; status: 'ok' | 'error'; listing_ids: string[]; snapshot_ids: string[] }) => {
         const res = await deps.fetch(`${supabaseUrl}/rest/v1/${SUGGESTIONS_TABLE}`, {
@@ -335,7 +352,9 @@ export function createHandler(deps: Deps) {
       }
 
       if (ids.length === 0) {
-        return respond('None of your listings carry the chosen tags, so there is no data to answer from.', [])
+        return respond(tagIds.length
+          ? 'None of your listings carry all the chosen tags, so there is no data to answer from.'
+          : 'You have no listings yet, so there is no data to answer from.', [])
       }
 
       const [listings, snapshots, timingRules, reviews] = await Promise.all([
@@ -362,7 +381,7 @@ export function createHandler(deps: Deps) {
         ? await read<CompanyRow>('mt_companies', { select: 'id,name,is_own', id: inList(companyIds) })
         : []
 
-      const context = buildContext({ tags, links, placeIds, typeIds, listings, companies, snapshots, options, timingRules, reviews })
+      const context = buildContext({ tags, links, chosenIds: tagIds, listings, companies, snapshots, options, timingRules, reviews })
 
       const key = deps.env('AQUILA_GEMINI_KEY')
       if (!key) throw new HttpError(500, 'The AQUILA_GEMINI_KEY secret is not set.')

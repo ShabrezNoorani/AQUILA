@@ -270,11 +270,11 @@ describe('CompaniesPage views, sorting and tag filter', () => {
     const ours = card('Scenic Zest Tours')
     expect(within(ours).getByText('OWN')).toBeTruthy()
     expect(within(ours).getByText('1 listing')).toBeTruthy()
-    expect([...ours.querySelectorAll('[data-kind]')].map((b) => b.textContent)).toEqual(['Walking', 'Paris'])
+    expect([...ours.querySelectorAll('[data-kind]')].map((b) => b.textContent)).toEqual(['Paris', 'Walking'])
     const rival = card('Rival Co')
     expect(within(rival).queryByText('OWN')).toBeNull()
     expect(within(rival).getByText('2 listings')).toBeTruthy()
-    expect([...rival.querySelectorAll('[data-kind]')].map((b) => b.textContent)).toEqual(['Boat', 'Walking', 'Lyon', 'Paris'])
+    expect([...rival.querySelectorAll('[data-kind]')].map((b) => b.textContent)).toEqual(['Lyon', 'Paris', 'Boat', 'Walking'])
   })
 
   it('switches between Library and List, and remembers the choice', async () => {
@@ -322,10 +322,14 @@ describe('CompaniesPage views, sorting and tag filter', () => {
     }
   })
 
-  it('offers every tag used by a listing, types and places, and no unused tag', async () => {
+  it('offers every tag used by a listing in one row per kind, and no unused tag', async () => {
     render(<CompaniesPage />)
     const bar = await screen.findByRole('group', { name: 'Filter by tag' })
-    expect(within(bar).getAllByRole('button').map((b) => b.textContent)).toEqual(['Boat', 'Walking', 'Lyon', 'Paris'])
+    const row = (kind: string) => within(within(bar).getByRole('group', { name: kind })).getAllByRole('button').map((b) => b.textContent)
+    expect(row('Place')).toEqual(['Lyon', 'Paris'])
+    expect(row('Type')).toEqual(['Boat', 'Walking'])
+    expect(within(bar).getByText('Place:')).toBeTruthy()
+    expect(within(bar).getByText('Type:')).toBeTruthy()
     expect(within(bar).queryByRole('button', { name: 'Unused' })).toBeNull()
     expect(within(bar).queryByRole('button', { name: 'Clear' })).toBeNull()
   })
@@ -449,5 +453,71 @@ describe('a listing with a company', () => {
     const table = screen.getByRole('table', { name: 'Companies' })
     expect(within(within(table).getByRole('link', { name: 'Unassigned' }).closest('tr')!).getByText('1')).toBeTruthy()
     expect(within(within(table).getByRole('link', { name: 'City Wonders Ltd' }).closest('tr')!).getByText('0')).toBeTruthy()
+  })
+})
+
+// ---------- new company, trailing dots, any kind ----------
+
+describe('New company', () => {
+  it('creates "Scenic Zest Tours" as OWN from the Companies page, and shows the OWN badge', async () => {
+    companies = [{ id: 'C1', name: 'Rival Co', is_own: false }]
+    render(<CompaniesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New company' }))
+    const form = screen.getByRole('form', { name: 'New company' })
+    fireEvent.change(within(form).getByLabelText('Company name *'), { target: { value: '  Scenic   Zest Tours ' } })
+    fireEvent.click(within(form).getByLabelText('This is ours (OWN)'))
+    fireEvent.click(within(form).getByRole('button', { name: 'Add company' }))
+    expect(await screen.findByText('Added “Scenic Zest Tours” as OWN.')).toBeTruthy()
+    const [ins] = writes()
+    expect(ins.table).toBe('mt_companies')
+    expect(callsOf(ins, 'insert')[0][0]).toEqual({ name: 'Scenic Zest Tours', is_own: true })
+    const card = within(screen.getByRole('list', { name: 'Companies' })).getAllByRole('listitem')
+      .find((c) => within(c).queryByRole('link', { name: 'Scenic Zest Tours' }))!
+    expect(within(card).getByText('OWN')).toBeTruthy()
+    expect(within(card).getByText('0 listings')).toBeTruthy()
+  })
+
+  it('does not add a duplicate: a name matching ignoring capitals, spaces and trailing dots is reported', async () => {
+    render(<CompaniesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New company' }))
+    const form = screen.getByRole('form', { name: 'New company' })
+    fireEvent.change(within(form).getByLabelText('Company name *'), { target: { value: 'rival  CO.' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Add company' }))
+    expect(await screen.findByText('“Rival Co” already exists, so no new company was added.')).toBeTruthy()
+    expect(writes()).toHaveLength(0)
+  })
+
+  it('refuses an empty name', async () => {
+    render(<CompaniesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New company' }))
+    const form = screen.getByRole('form', { name: 'New company' })
+    fireEvent.click(within(form).getByRole('button', { name: 'Add company' }))
+    expect((await within(form).findByRole('alert')).textContent).toMatch(/company name is required/i)
+    expect(writes()).toHaveLength(0)
+  })
+})
+
+describe('trailing dots and tags of new kinds', () => {
+  it('"City Wonders Ltd." and "City Wonders Ltd" are the same company', () => {
+    const list: Company[] = [{ id: 'CW', name: 'City Wonders Ltd', is_own: false }]
+    expect(findCompanyByName(list, 'City Wonders Ltd.')?.id).toBe('CW')
+    expect(findCompanyByName(list, '  city wonders ltd...  ')?.id).toBe('CW')
+    expect(findCompanyByName([{ id: 'X', name: 'City Wonders Ltd.', is_own: false }], 'city wonders ltd')?.id).toBe('X')
+    expect(companyRenameCheck(list, 'other', 'City Wonders Ltd.').ok).toBe(false)
+  })
+
+  it('a tag of any new kind gets its own filter row, and selections across kinds must all match', async () => {
+    tags = [...tags, { id: 'F1', name: 'Bakery', kind: 'food' }]
+    links = [...links, { listing_id: 'L3', tag_id: 'F1' }, { listing_id: 'L1', tag_id: 'F1' }]
+    render(<CompaniesPage />)
+    const bar = await screen.findByRole('group', { name: 'Filter by tag' })
+    expect(within(within(bar).getByRole('group', { name: 'Food' })).getByRole('button', { name: 'Bakery' })).toBeTruthy()
+    fireEvent.click(within(bar).getByRole('button', { name: 'Bakery' }))
+    expect(within(screen.getByRole('list', { name: 'Companies' })).getAllByRole('link').map((a) => a.textContent))
+      .toEqual(['Rival Co', 'Scenic Zest Tours'])
+    fireEvent.click(within(bar).getByRole('button', { name: 'Walking' }))
+    // Only Our Walk (Scenic Zest Tours) has both Bakery and Walking.
+    expect(within(screen.getByRole('list', { name: 'Companies' })).getAllByRole('link').map((a) => a.textContent))
+      .toEqual(['Scenic Zest Tours'])
   })
 })

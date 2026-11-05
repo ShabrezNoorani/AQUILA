@@ -62,6 +62,8 @@ const geminiCalls = () => calls.filter((c) => c.url.host === 'generativelanguage
 const restTables = () => calls.filter((c) => c.url.pathname.startsWith('/rest/v1/')).map((c) => c.url.pathname.replace('/rest/v1/', ''))
 const saved = () => calls.filter((c) => c.url.pathname === '/rest/v1/mt_suggestions').map((c) => JSON.parse(String(c.init.body)))
 const sentToGemini = () => JSON.parse(String(geminiCalls()[0].init.body))
+/** Every listing sent, across all company groups. */
+const allListings = () => sentContext().companies.flatMap((g: { listings: unknown[] }) => g.listings)
 const sentContext = () => {
   const text: string = sentToGemini().contents[0].parts[0].text
   return JSON.parse(text.slice(text.indexOf('{')))
@@ -150,10 +152,16 @@ describe('request checks', () => {
     expect(parseAskRequest({ question: ' Hi ', tag_ids: ['P1', 'P1', 'T1'] })).toEqual({ question: 'Hi', tag_ids: ['P1', 'T1'] })
   })
 
-  it('answers 400 when no chosen tag is a place tag', async () => {
+  it('accepts type tags alone, with no place tag', async () => {
     const res = await handler()(post({ question: 'Prices?', tag_ids: ['T1'] }))
+    expect(res.status).toBe(200)
+    expect(geminiCalls()).toHaveLength(1)
+  })
+
+  it('answers 400 when every chosen tag has been deleted, instead of widening to all listings', async () => {
+    const res = await handler()(post({ question: 'Prices?', tag_ids: ['gone'] }))
     expect(res.status).toBe(400)
-    expect((await res.json()).error).toMatch(/at least one place tag/i)
+    expect((await res.json()).error).toMatch(/no longer exist/i)
     expect(geminiCalls()).toHaveLength(0)
   })
 
@@ -171,11 +179,12 @@ describe('choosing listings by tag', () => {
     { listing_id: 'B', tag_id: 'P2' }, { listing_id: 'B', tag_id: 'T2' },
     { listing_id: 'C', tag_id: 'T1' },
   ]
-  it('needs a chosen place, and a chosen type only when types were chosen', () => {
-    expect(matchListingIds(links, ['P1'], [])).toEqual(['A'])
-    expect(matchListingIds(links, ['P1', 'P2'], [])).toEqual(['A', 'B'])
-    expect(matchListingIds(links, ['P1', 'P2'], ['T2'])).toEqual(['B'])
-    expect(matchListingIds(links, ['P1'], ['T2'])).toEqual([])
+  it('keeps listings that carry ALL the chosen tags, of any kinds', () => {
+    expect(matchListingIds(links, ['P1'])).toEqual(['A'])
+    expect(matchListingIds(links, ['T1'])).toEqual(['A', 'C'])
+    expect(matchListingIds(links, ['P1', 'T1'])).toEqual(['A'])
+    expect(matchListingIds(links, ['P1', 'P2'])).toEqual([])
+    expect(matchListingIds(links, [])).toEqual([])
   })
 })
 
@@ -215,13 +224,14 @@ describe('a full answer', () => {
     expect(prompt).toMatch(/never guess/i)
   })
 
-  it('sends the data grouped by the chosen place tag, with tags, ownership, latest snapshot, options, timing rules and nameless reviews', async () => {
+  it('sends the data grouped by company, with all tags and kinds, ownership, latest snapshot, options, timing rules and nameless reviews', async () => {
     await handler()(post({ question: 'Prices?', tag_ids: ['P1', 'T1'] }))
     const ctx = sentContext()
-    expect(ctx.chosen_tags).toEqual({ places: ['Dubai'], types: ['Safari'] })
-    expect(ctx.groups).toHaveLength(1)
-    expect(ctx.groups[0].place_tag).toBe('Dubai')
-    const rival = ctx.groups[0].listings.find((l: { name: string }) => l.name === 'Rival Safari')
+    expect(ctx.chosen_tags).toEqual([{ kind: 'place', name: 'Dubai' }, { kind: 'type', name: 'Safari' }])
+    expect(ctx.companies.map((g: { company: string; own: boolean }) => [g.company, g.own])).toEqual([
+      ['Scenic Zest Tours', true], ['Rival Co', false],
+    ])
+    const rival = allListings().find((l: { name: string }) => l.name === 'Rival Safari')
     expect(rival.ownership).toBe('competitor')
     expect(rival.tags).toEqual([{ kind: 'place', name: 'Dubai' }, { kind: 'type', name: 'Safari' }])
     expect(rival.latest_snapshot.snapshot_id).toBe('S2new')
@@ -230,7 +240,7 @@ describe('a full answer', () => {
     expect(rival.latest_snapshot.options[0]).toMatchObject({ travelers: 2, price_date: '2026-11-25', price_per_person: 95.2 })
     expect(rival.timing_rules).toEqual([{ rule: 'Sunset departures only', created_at: '2026-10-01' }])
     expect(rival.reviews).toEqual([{ stars: 2, text: 'Late pickup' }])
-    const ours = ctx.groups[0].listings.find((l: { name: string }) => l.name === 'Our Safari')
+    const ours = allListings().find((l: { name: string }) => l.name === 'Our Safari')
     expect(ours.ownership).toBe('own')
     expect(ours.reviews).toEqual([])
   })
@@ -241,7 +251,7 @@ describe('a full answer', () => {
     expect(read.url.searchParams.get('select')).toBe('id,name,is_own')
     expect(read.url.searchParams.get('id')).toBe('in.(C1,C2)')
     const byName = Object.fromEntries(
-      sentContext().groups[0].listings.map((l: { name: string; company: unknown }) => [l.name, l.company]),
+      allListings().map((l: { name: string; company: unknown }) => [l.name, l.company]),
     )
     expect(byName).toEqual({
       'Our Safari': { name: 'Scenic Zest Tours', own: true },
@@ -258,7 +268,9 @@ describe('a full answer', () => {
     tables.mt_listings = (tables.mt_listings as Record<string, unknown>[]).map(({ company_id: _c, ...l }) => l)
     await handler()(post({ question: 'Prices?', tag_ids: ['P1', 'T1'] }))
     expect(restTables()).not.toContain('mt_companies')
-    for (const l of sentContext().groups[0].listings) expect(l.company).toBeNull()
+    for (const l of allListings()) expect(l.company).toBeNull()
+    expect(sentContext().companies).toHaveLength(1)
+    expect(sentContext().companies[0].company).toBeNull()
   })
 
   it('returns the answer with the listing and snapshot ids it used, ignoring ids it was not given', async () => {
@@ -280,7 +292,7 @@ describe('a full answer', () => {
     await handler()(post({ question: '  Prices?  ', tag_ids: ['T1', 'P1'] }))
     expect(saved()).toEqual([{
       question: 'Prices?',
-      tag_ids: ['P1', 'T1'],
+      tag_ids: ['T1', 'P1'],
       model: GEMINI_MODEL,
       answer: 'Rival Safari (captured 2026-10-30) charges 95.2 per person.',
       status: 'ok',
@@ -300,7 +312,7 @@ describe('a full answer', () => {
   it('answers without calling Gemini when no listing has the tags, and still saves the row', async () => {
     const res = await handler()(post({ question: 'Prices?', tag_ids: ['P2', 'T2'] }))
     const body = await res.json()
-    expect(body.answer).toMatch(/none of your listings carry the chosen tags/i)
+    expect(body.answer).toMatch(/none of your listings carry all the chosen tags/i)
     expect(body.listing_ids).toEqual([])
     expect(geminiCalls()).toHaveLength(0)
     expect(saved()).toHaveLength(1)
@@ -339,31 +351,54 @@ describe('when Gemini fails', () => {
   })
 })
 
+describe('asking with no tags, about companies', () => {
+  it('uses every listing when no tag is chosen, and the prompt tells the model to compare company groups', async () => {
+    const res = await handler()(post({ question: 'Which competitor tour has the best reviews?', tag_ids: [] }))
+    expect(res.status).toBe(200)
+    const read = calls.find((c) => c.url.pathname === '/rest/v1/mt_listings' && c.url.searchParams.get('select') === 'id')
+    expect(read).toBeTruthy()
+    const ctx = sentContext()
+    expect(ctx.chosen_tags).toEqual([])
+    // Each company is its own group, OWN first; the competitor group carries its listings' reviews.
+    const rival = ctx.companies.find((g: { company: string }) => g.company === 'Rival Co')
+    expect(rival.own).toBe(false)
+    expect(rival.listings.map((l: { reviews: unknown }) => l.reviews)).toEqual([[{ stars: 2, text: 'Late pickup' }]])
+    expect(ctx.companies[0]).toMatchObject({ company: 'Scenic Zest Tours', own: true })
+    expect(SYSTEM_PROMPT).toMatch(/grouped by company/i)
+    expect(SYSTEM_PROMPT).toMatch(/which competitor tour has the best reviews\?/i)
+    expect(SYSTEM_PROMPT).toMatch(/compare the company groups/i)
+    expect(saved()[0].tag_ids).toEqual([])
+  })
+})
+
 describe('buildContext', () => {
-  it('puts a listing under every chosen place it carries', () => {
+  const base = { snapshots: [], options: [], timingRules: [], reviews: [] }
+
+  it('sends every tag of a listing, of every kind, not only the chosen ones', () => {
+    const allTags = [...tags, { id: 'F1', kind: 'food', name: 'Bakery' }]
     const ctx = buildContext({
-      tags,
-      links: [{ listing_id: 'X', tag_id: 'P1' }, { listing_id: 'X', tag_id: 'P2' }],
-      placeIds: ['P1', 'P2'],
-      typeIds: [],
-      listings: [{ id: 'X', name: 'Both', is_own: true }],
-      snapshots: [],
-      options: [],
-      timingRules: [],
-      reviews: [],
+      ...base,
+      tags: allTags,
+      links: [{ listing_id: 'X', tag_id: 'P1' }, { listing_id: 'X', tag_id: 'T1' }, { listing_id: 'X', tag_id: 'F1' }],
+      chosenIds: ['P1'],
+      listings: [{ id: 'X', name: 'Mixed', is_own: false }],
     })
-    expect(ctx.groups.map((g) => [g.place_tag, g.listings.map((l) => l.name)])).toEqual([['Dubai', ['Both']], ['Abu Dhabi', ['Both']]])
-    expect(ctx.groups[0].listings[0].latest_snapshot).toBeNull()
+    expect(ctx.chosen_tags).toEqual([{ kind: 'place', name: 'Dubai' }])
+    expect(ctx.companies[0].listings[0].tags).toEqual([
+      { kind: 'place', name: 'Dubai' }, { kind: 'type', name: 'Safari' }, { kind: 'food', name: 'Bakery' },
+    ])
+    expect(ctx.companies[0].listings[0].latest_snapshot).toBeNull()
   })
 
-  it('groups listings by company: each carries its own company, OWN or competitor, or null when unassigned', () => {
+  it('groups listings by company: OWN first, then competitors by name, then Unassigned', () => {
     const ctx = buildContext({
+      ...base,
       tags,
-      links: ['A', 'B', 'C', 'D'].map((id) => ({ listing_id: id, tag_id: 'P1' })),
-      placeIds: ['P1'],
-      typeIds: [],
+      links: [],
+      chosenIds: [],
       listings: [
         { id: 'A', name: 'Ours one', is_own: true, company_id: 'OWN1' },
+        { id: 'E', name: 'Zed walk', is_own: false, company_id: 'R2' },
         { id: 'B', name: 'Ours two', is_own: true, company_id: 'OWN1' },
         { id: 'C', name: 'Theirs', is_own: false, company_id: 'R1' },
         { id: 'D', name: 'Nobody', is_own: false, company_id: null },
@@ -371,30 +406,33 @@ describe('buildContext', () => {
       companies: [
         { id: 'OWN1', name: 'Scenic Zest Tours', is_own: true },
         { id: 'R1', name: 'Rival Co', is_own: false },
+        { id: 'R2', name: 'Apex Tours', is_own: false },
       ],
-      snapshots: [],
-      options: [],
-      timingRules: [],
-      reviews: [],
     })
-    const byCompany = new Map<string, string[]>()
-    for (const l of ctx.groups[0].listings) {
-      const key = l.company ? `${l.company.name}${l.company.own ? ' (OWN)' : ''}` : 'Unassigned'
-      byCompany.set(key, [...(byCompany.get(key) ?? []), l.name])
-    }
-    expect(Object.fromEntries(byCompany)).toEqual({
-      'Scenic Zest Tours (OWN)': ['Ours one', 'Ours two'],
-      'Rival Co': ['Theirs'],
-      Unassigned: ['Nobody'],
-    })
+    expect(ctx.companies.map((g) => [g.company, g.own, g.listings.map((l) => l.name)])).toEqual([
+      ['Scenic Zest Tours', true, ['Ours one', 'Ours two']],
+      ['Apex Tours', false, ['Zed walk']],
+      ['Rival Co', false, ['Theirs']],
+      [null, false, ['Nobody']],
+    ])
+    expect(ctx.companies[0].listings[0].company).toEqual({ name: 'Scenic Zest Tours', own: true })
+    expect(ctx.companies[3].listings[0].company).toBeNull()
   })
 
-  it('treats a company id with no matching company as no company', () => {
+  it('takes OWN from the company, and treats a company id with no matching company as no company', () => {
     const ctx = buildContext({
-      tags, links: [{ listing_id: 'A', tag_id: 'P1' }], placeIds: ['P1'], typeIds: [],
-      listings: [{ id: 'A', name: 'Ghost', is_own: false, company_id: 'gone' }],
-      snapshots: [], options: [], timingRules: [], reviews: [],
+      ...base,
+      tags, links: [], chosenIds: [],
+      listings: [
+        { id: 'A', name: 'Ghost', is_own: false, company_id: 'gone' },
+        { id: 'B', name: 'Ours', is_own: false, company_id: 'OWN1' },
+      ],
+      companies: [{ id: 'OWN1', name: 'Scenic Zest Tours', is_own: true }],
     })
-    expect(ctx.groups[0].listings[0].company).toBeNull()
+    const byName = Object.fromEntries(ctx.companies.flatMap((g) => g.listings).map((l) => [l.name, [l.company, l.ownership]]))
+    expect(byName).toEqual({
+      Ghost: [null, 'competitor'],
+      Ours: [{ name: 'Scenic Zest Tours', own: true }, 'own'],
+    })
   })
 })

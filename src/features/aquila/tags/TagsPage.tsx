@@ -1,18 +1,18 @@
-// #/tags: lists type and place tags, adds new ones, and deletes them after confirmation.
+// #/tags: lists tags grouped by kind, adds new ones (of an existing or new kind), and deletes them after confirmation.
 
 import { useEffect, useState, type FormEvent } from 'react'
 import { countListingsWithTag, createTag, deleteTag, fetchTags } from '../api'
 import { hrefFor } from '../router'
-import { TAG_KINDS, type Tag, type TagKind } from '../types'
+import type { Tag } from '../types'
 import { Badge, Button, Card, ConfirmDialog, EmptyState, Field, FormError, Page, TextField, inputClass } from '../ui'
-import { tagFormToRow, tagsOfKind } from './tagMapping'
+import { groupByKind, kindLabel, kindsOf, tagFormToRow } from './tagMapping'
 
-const KIND_TITLES: Record<TagKind, string> = { type: 'Type tags', place: 'Place tags' }
+const kindTitle = (kind: string) => `${kindLabel(kind)} tags`
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
-function AddTagForm({ onAdded }: { onAdded: (tag: Tag, existed: boolean) => void }) {
+function AddTagForm({ kinds, onAdded }: { kinds: string[]; onAdded: (tag: Tag, existed: boolean) => void }) {
   const [name, setName] = useState('')
-  const [kind, setKind] = useState<TagKind>('type')
+  const [kind, setKind] = useState(() => kinds[0] ?? '')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -44,11 +44,12 @@ function AddTagForm({ onAdded }: { onAdded: (tag: Tag, existed: boolean) => void
         <p className="text-sm text-ink-3">A name that already exists for the same kind is reused, not duplicated.</p>
       </div>
       <TextField id="tag-name" label="Tag name *" value={name} onChange={setName} error={error ?? undefined} />
-      <Field id="tag-kind" label="Kind">
-        <select id="tag-kind" value={kind} className={inputClass}
-          onChange={(e) => setKind(e.target.value as TagKind)}>
-          {TAG_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
-        </select>
+      <Field id="tag-kind" label="Kind" help="Pick an existing kind or type a new one, for example place or food.">
+        <input id="tag-kind" value={kind} className={inputClass} list="tag-kinds" autoComplete="off"
+          aria-describedby="tag-kind-help" onChange={(e) => setKind(e.target.value)} />
+        <datalist id="tag-kinds">
+          {kinds.map((k) => <option key={k} value={k}>{kindLabel(k)}</option>)}
+        </datalist>
       </Field>
       <div className="flex justify-end">
         <Button type="submit" variant="primary" disabled={busy}>
@@ -111,20 +112,17 @@ export default function TagsPage() {
 
       {tags && (
         <div className="grid items-start gap-6 lg:grid-cols-[20rem_1fr]">
-          <AddTagForm onAdded={added} />
+          <AddTagForm kinds={kindsOf(tags)} onAdded={added} />
           <div className="grid items-start gap-6 md:grid-cols-2">
-            {TAG_KINDS.map((kind) => {
-              const list = tagsOfKind(tags, kind)
+            {tags.length === 0 && <EmptyState compact title="No tags yet." description="Add the first one here." />}
+            {groupByKind(tags).map(({ kind, tags: list }) => {
               return (
                 <Card key={kind} padded={false}>
                   <div className="flex items-center justify-between border-b border-line px-6 py-3">
-                    <h2 className="text-base font-semibold text-ink">{KIND_TITLES[kind]}</h2>
+                    <h2 className="text-base font-semibold text-ink">{kindTitle(kind)}</h2>
                     <Badge>{list.length}</Badge>
                   </div>
-                  {list.length === 0 && (
-                    <div className="p-4"><EmptyState compact title="None yet." /></div>
-                  )}
-                  <ul aria-label={KIND_TITLES[kind]} className="divide-y divide-line">
+                  <ul aria-label={kindTitle(kind)} className="divide-y divide-line">
                     {list.map((t) => (
                       <li key={t.id} className="flex items-center justify-between gap-3 px-6 py-2.5 hover:bg-paper/60">
                         <span className="text-sm text-ink">{t.name}</span>

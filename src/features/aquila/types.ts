@@ -77,7 +77,7 @@ export type Snapshot = Partial<Omit<SnapshotInsert, 'method' | 'status'>> & {
 }
 
 /** Fields of mt_listings that the "Edit listing" form may change. */
-export type ListingUpdate = Pick<ListingInsert, 'name' | 'source' | 'url' | 'competitor_name' | 'active' | 'company_id'>
+export type ListingUpdate = Pick<ListingInsert, 'name' | 'is_own' | 'source' | 'url' | 'competitor_name' | 'active' | 'company_id'>
 
 /**
  * Fields of mt_snapshots that editing may change. listing_id, method, raw_html and raw_text are
@@ -106,9 +106,11 @@ export type Review = Omit<ReviewInsert, 'source'> & {
 
 // ---------- tags ----------
 
-/** The only two kinds of tag. Tag names themselves live in the database, never in code. */
-export const TAG_KINDS = ['type', 'place'] as const
-export type TagKind = (typeof TAG_KINDS)[number]
+/**
+ * A tag's kind, for example "type" or "place". Kinds are free text chosen by the owner and stored
+ * lower-case; no kind or tag name is written in code.
+ */
+export type TagKind = string
 
 /** A row read back from mt_tags. */
 export type Tag = {

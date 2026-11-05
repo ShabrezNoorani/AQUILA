@@ -1,26 +1,39 @@
-// Pure helpers for tags: name rules, the listing tag rule, and listing filters.
-// No tag names are written here; every name comes from mt_tags.
+// Pure helpers for tags: name and kind rules, grouping by kind, and filtering listings by tags.
+// No tag names or kinds are written here; every name and kind comes from mt_tags.
 
-import { TAG_KINDS, type Listing, type ListingTag, type Tag, type TagKind } from '../types'
+import type { Listing, ListingTag, Tag, TagKind } from '../types'
 
 /** Trims a tag name and collapses inner runs of spaces. */
 export function normaliseTagName(name: string): string {
   return name.trim().replace(/\s+/g, ' ')
 }
 
+/** Trims a kind, collapses inner spaces and lower-cases it, so "Place " and "place" are one kind. */
+export function normaliseKind(kind: string): string {
+  return normaliseTagName(kind).toLocaleLowerCase()
+}
+
+/** A kind as a heading: "place" → "Place". */
+export function kindLabel(kind: string): string {
+  const k = normaliseKind(kind)
+  return k ? k[0].toLocaleUpperCase() + k.slice(1) : k
+}
+
 /** Key used to compare names, ignoring capitalisation. */
 const nameKey = (name: string) => normaliseTagName(name).toLocaleLowerCase()
 
 /**
- * The existing tag of the same kind whose name matches, ignoring capitalisation and outer spaces.
- * A tag of the other kind is never returned.
+ * The existing tag of the same kind whose name matches, ignoring capitalisation and extra spaces
+ * in both. A tag of another kind is never returned.
  */
 export function findTagByName(tags: Tag[], kind: TagKind, name: string): Tag | undefined {
   const key = nameKey(name)
-  return tags.find((t) => t.kind === kind && nameKey(t.name) === key)
+  const k = normaliseKind(kind)
+  return tags.find((t) => normaliseKind(t.kind) === k && nameKey(t.name) === key)
 }
 
-export const isTagKind = (v: unknown): v is TagKind => TAG_KINDS.includes(v as TagKind)
+/** Any non-blank text is a valid kind. */
+export const isTagKind = (v: unknown): v is TagKind => typeof v === 'string' && normaliseKind(v) !== ''
 
 /** Checks a new tag before it is written. Returns the cleaned row or an error message. */
 export function tagFormToRow(name: string, kind: string):
@@ -28,35 +41,32 @@ export function tagFormToRow(name: string, kind: string):
   | { ok: false; error: string } {
   const clean = normaliseTagName(name)
   if (!clean) return { ok: false, error: 'Tag name is required' }
-  if (!isTagKind(kind)) return { ok: false, error: 'Tag kind must be type or place' }
-  return { ok: true, row: { name: clean, kind } }
+  if (!isTagKind(kind)) return { ok: false, error: 'Tag kind is required' }
+  return { ok: true, row: { name: clean, kind: normaliseKind(kind) } }
 }
 
-/**
- * A listing needs at least one type tag and at least one place tag. Several of either kind
- * are allowed. Returns an error message, or null when the selection is valid.
- * Ids that are not in `tags` are ignored.
- */
-export function listingTagsError(selectedIds: string[], tags: Tag[]): string | null {
-  const byId = new Map(tags.map((t) => [t.id, t]))
-  const chosen = [...new Set(selectedIds)].map((id) => byId.get(id)).filter((t): t is Tag => !!t)
-  const types = chosen.filter((t) => t.kind === 'type').length
-  const places = chosen.filter((t) => t.kind === 'place').length
-  const problems: string[] = []
-  if (types === 0) problems.push('choose at least one type tag')
-  if (places === 0) problems.push('choose at least one place tag')
-  if (!problems.length) return null
-  const text = problems.join(' and ')
-  return text[0].toUpperCase() + text.slice(1)
+/** Every kind in use, cleaned, A to Z. */
+export function kindsOf(tags: Tag[]): TagKind[] {
+  return [...new Set(tags.map((t) => normaliseKind(t.kind)).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+}
+
+/** Orders tags by kind (A to Z), then by name. */
+export const byKindThenName = (a: Tag, b: Tag) =>
+  normaliseKind(a.kind).localeCompare(normaliseKind(b.kind)) || a.name.localeCompare(b.name)
+
+/** Tags of one kind, sorted by name. */
+export function tagsOfKind(tags: Tag[], kind: TagKind): Tag[] {
+  const k = normaliseKind(kind)
+  return tags.filter((t) => normaliseKind(t.kind) === k).sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** Tags grouped by kind: one group per kind (A to Z), each sorted by name. */
+export function groupByKind(tags: Tag[]): { kind: TagKind; tags: Tag[] }[] {
+  return kindsOf(tags).map((kind) => ({ kind, tags: tagsOfKind(tags, kind) }))
 }
 
 /** Adds a tag to a list unless a tag with that id is already there. */
 export const withTag = (tags: Tag[], tag: Tag): Tag[] => (tags.some((t) => t.id === tag.id) ? tags : [...tags, tag])
-
-/** Tags of one kind, sorted by name. */
-export function tagsOfKind(tags: Tag[], kind: TagKind): Tag[] {
-  return tags.filter((t) => t.kind === kind).sort((a, b) => a.name.localeCompare(b.name))
-}
 
 /** Groups mt_listing_tags rows into listing id → its tags, dropping links to unknown tags. */
 export function tagsByListing(links: ListingTag[], tags: Tag[]): Map<string, Tag[]> {
@@ -69,22 +79,25 @@ export function tagsByListing(links: ListingTag[], tags: Tag[]): Map<string, Tag
     if (!list.some((t) => t.id === tag.id)) list.push(tag)
     out.set(link.listing_id, list)
   }
-  for (const list of out.values()) {
-    list.sort((a, b) => TAG_KINDS.indexOf(a.kind) - TAG_KINDS.indexOf(b.kind) || a.name.localeCompare(b.name))
-  }
+  for (const list of out.values()) list.sort(byKindThenName)
   return out
 }
 
-export type ListingFilters = { typeId: string; placeId: string }
+/** Every tag used by at least one listing, by kind then name. */
+export function usedTags(tagMap: Map<string, Tag[]>): Tag[] {
+  const used = new Map<string, Tag>()
+  for (const list of tagMap.values()) for (const t of list) used.set(t.id, t)
+  return [...used.values()].sort(byKindThenName)
+}
 
-/** Keeps listings that carry the chosen type tag and the chosen place tag. '' means any. */
-export function filterListings(
-  listings: Listing[],
-  tagMap: Map<string, Tag[]>,
-  { typeId, placeId }: ListingFilters,
-): Listing[] {
-  return listings.filter((l) => {
-    const ids = new Set((tagMap.get(l.id) ?? []).map((t) => t.id))
-    return (!typeId || ids.has(typeId)) && (!placeId || ids.has(placeId))
-  })
+/** True when the listing carries every selected tag, of any kind (always true when none are selected). */
+export function hasAllTags(tagMap: Map<string, Tag[]>, listingId: string, selected: string[]): boolean {
+  if (!selected.length) return true
+  const ids = new Set((tagMap.get(listingId) ?? []).map((t) => t.id))
+  return selected.every((id) => ids.has(id))
+}
+
+/** Keeps listings that carry every selected tag. */
+export function filterListings(listings: Listing[], tagMap: Map<string, Tag[]>, selected: string[]): Listing[] {
+  return listings.filter((l) => hasAllTags(tagMap, l.id, selected))
 }

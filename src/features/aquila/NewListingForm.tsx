@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { createCompany, createListingWithTags, fetchCompanies, fetchTags } from './api'
+import { createCompany, createListingWithTags, fetchCompanies, fetchTags, setCompanyOwn } from './api'
 import CompanyField from './companies/CompanyField'
-import { emptyListingForm, listingFormToRow, type ListingForm } from './mapping'
-import { listingTagsError, withTag } from './tags/tagMapping'
+import { emptyListingForm, findCompanyByName, listingFormToRow, type ListingForm } from './mapping'
+import { withTag } from './tags/tagMapping'
 import TagPicker from './tags/TagPicker'
 import { LISTING_SOURCES, SOURCE_LABELS, type Company, type ListingSource, type Tag } from './types'
 import { Button, Card, Field, FormError, Page, TextField, inputClass } from './ui'
@@ -17,7 +17,6 @@ export default function NewListingForm({ onCreated }: { onCreated: (id: string) 
   const [tags, setTags] = useState<Tag[] | null>(null)
   const [tagLoadError, setTagLoadError] = useState<string | null>(null)
   const [tagIds, setTagIds] = useState<string[]>([])
-  const [tagError, setTagError] = useState<string | null>(null)
   const [companies, setCompanies] = useState<Company[]>([])
 
   useEffect(() => {
@@ -41,16 +40,18 @@ export default function NewListingForm({ onCreated }: { onCreated: (id: string) 
     e.preventDefault()
     setSaveError(null)
     const mapped = listingFormToRow(form, { requireCompany: true })
-    // At least one type tag and at least one place tag, or nothing is saved.
-    const tagProblem = tags ? listingTagsError(tagIds, tags) : 'Tags have not loaded, so the listing cannot be saved yet'
+    // Tags are optional: any number of tags of any kind.
     setErrors(mapped.ok ? {} : mapped.errors)
-    setTagError(tagProblem)
-    if (!mapped.ok || tagProblem) return
+    if (!mapped.ok) return
     setBusy(true)
     try {
-      // Reuse the company with the same name (ignoring case and spaces), or create it.
-      // A new company is OWN when this listing is ticked as ours.
-      const { company } = await createCompany(form.company, form.is_own)
+      // Reuse the company with the same name (ignoring capitals, extra spaces and trailing dots),
+      // or create it. OWN belongs to the company: a new one gets the tick, an existing one is
+      // updated if the tick differs.
+      const found = await createCompany(form.company, form.is_own)
+      const company = found.existed && found.company.is_own !== form.is_own
+        ? await setCompanyOwn(found.company.id, form.is_own)
+        : found.company
       const created = await createListingWithTags({ ...mapped.row, company_id: company.id }, tagIds)
       onCreated(created.id)
     } catch (err) {
@@ -69,7 +70,11 @@ export default function NewListingForm({ onCreated }: { onCreated: (id: string) 
 
           <CompanyField id="listing-company" label="Company *" value={form.company} companies={companies}
             help="Pick an existing company or type a new one."
-            onChange={(v) => set('company', v)} error={errors.company} />
+            onChange={(v) => {
+              set('company', v)
+              const match = findCompanyByName(companies, v)
+              if (match) set('is_own', match.is_own)
+            }} error={errors.company} />
 
           <label className="flex items-center gap-2 text-sm font-medium text-ink">
             <input type="checkbox" className="h-4 w-4 accent-ink" checked={form.is_own}
@@ -94,18 +99,14 @@ export default function NewListingForm({ onCreated }: { onCreated: (id: string) 
             onChange={(v) => set('url', v)} error={errors.url} />
         </Card>
 
-        <Card title="Tags" description="At least one type and at least one place.">
+        <Card title="Tags" description="Optional. Any number of tags, of any kind.">
           {tagLoadError && <FormError>Could not load tags: {tagLoadError}</FormError>}
           {!tagLoadError && !tags && <p className="text-sm text-ink-3">Loading tags…</p>}
           {tags && (
-            <TagPicker idPrefix="new-listing" tags={tags} selected={tagIds} error={tagError}
+            <TagPicker idPrefix="new-listing" tags={tags} selected={tagIds}
               onTagCreated={(tag) => setTags((prev) => withTag(prev ?? [], tag))}
-              onChange={(ids) => {
-                setTagIds(ids)
-                setTagError(null)
-              }} />
+              onChange={setTagIds} />
           )}
-          {!tags && tagError && <p role="alert" className="mt-2 text-sm text-negative-deep">{tagError}</p>}
         </Card>
 
         {saveError && <FormError>Could not save: {saveError}</FormError>}

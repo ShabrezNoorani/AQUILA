@@ -72,27 +72,25 @@ describe('NewListingForm tag rule', () => {
     expect(screen.getByLabelText('Dubai').getAttribute('type')).toBe('checkbox')
   })
 
-  it('refuses to save with no tags and writes nothing', async () => {
-    await fillName()
+  it('saves a listing with no tags at all', async () => {
+    const onCreated = vi.fn()
+    render(<NewListingForm onCreated={onCreated} />)
+    await screen.findByLabelText('Safari')
+    fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'Red Dunes' } })
+    fireEvent.change(screen.getByLabelText(/^company/i), { target: { value: 'Rival Co' } })
     submit()
-    expect((await screen.findByRole('alert')).textContent).toMatch(/one type tag.*at least one place tag/i)
-    expect(writes()).toHaveLength(0)
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-1'))
+    expect(queries.filter((q) => q.table === 'mt_listing_tags' && has(q, 'insert'))).toHaveLength(0)
   })
 
-  it('refuses to save with a type but no place', async () => {
-    await fillName()
-    fireEvent.click(screen.getByLabelText('Safari'))
-    submit()
-    expect((await screen.findByRole('alert')).textContent).toMatch(/at least one place tag/i)
-    expect(writes()).toHaveLength(0)
-  })
-
-  it('refuses to save with places but no type', async () => {
+  it('saves a place tag with no type tag', async () => {
     await fillName()
     fireEvent.click(screen.getByLabelText('Dubai'))
     submit()
-    expect((await screen.findByRole('alert')).textContent).toMatch(/choose at least one type tag/i)
-    expect(writes()).toHaveLength(0)
+    await waitFor(() => expect(queries.some((q) => q.table === 'mt_listing_tags' && has(q, 'insert'))).toBe(true))
+    const link = queries.find((q) => q.table === 'mt_listing_tags' && has(q, 'insert'))!
+    expect(callsOf(link, 'insert')[0][0]).toEqual([{ listing_id: 'new-1', tag_id: 'P1' }])
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('allows two type tags: both are saved', async () => {
@@ -156,13 +154,37 @@ describe('NewListingForm tag rule', () => {
     expect(writes()).toHaveLength(0)
   })
 
-  it('does not check tags while the name is also invalid, but shows both errors', async () => {
+  it('shows the name error and saves nothing when the name is missing', async () => {
     render(<NewListingForm onCreated={() => {}} />)
     await screen.findByLabelText('Safari')
     submit()
     expect(await screen.findByText(/name is required/i)).toBeTruthy()
-    expect(screen.getByText(/at least one place tag/i)).toBeTruthy()
     expect(writes()).toHaveLength(0)
+  })
+
+  it('mixes tags of several kinds, including a new kind added inline', async () => {
+    const onCreated = vi.fn()
+    render(<NewListingForm onCreated={onCreated} />)
+    fireEvent.change(await screen.findByLabelText(/^name/i), { target: { value: 'Taste Walk' } })
+    fireEvent.change(screen.getByLabelText(/^company/i), { target: { value: 'Rival Co' } })
+    await screen.findByLabelText('Safari')
+    fireEvent.change(screen.getByLabelText('New tag'), { target: { value: 'Bakery' } })
+    fireEvent.change(screen.getByLabelText('Kind'), { target: { value: 'Food' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect((await screen.findByLabelText('Bakery') as HTMLInputElement).checked).toBe(true)
+    expect(screen.getByRole('group', { name: 'Food' })).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Safari'))
+    fireEvent.click(screen.getByLabelText('Cruise'))
+    submit()
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-1'))
+    const link = queries.find((q) => q.table === 'mt_listing_tags' && has(q, 'insert'))!
+    expect(callsOf(link, 'insert')[0][0]).toEqual([
+      { listing_id: 'new-1', tag_id: 'NEW' },
+      { listing_id: 'new-1', tag_id: 'T1' },
+      { listing_id: 'new-1', tag_id: 'T2' },
+    ])
+    const ins = queries.find((q) => q.table === 'mt_tags' && has(q, 'insert'))!
+    expect(callsOf(ins, 'insert')[0][0]).toEqual({ name: 'Bakery', kind: 'food' })
   })
 
   it('removes the new listing again if its tags cannot be saved', async () => {
@@ -238,23 +260,15 @@ describe('ListingDetailPage tags', () => {
     expect(queries.filter((q) => q.table === 'mt_listing_tags' && has(q, 'insert'))).toHaveLength(0)
   })
 
-  it('refuses to remove the last place tag and writes nothing', async () => {
+  it('allows removing every tag', async () => {
     render(<ListingDetailPage id="L1" />)
     fireEvent.click(await screen.findByRole('button', { name: /edit tags/i }))
     fireEvent.click(screen.getByLabelText('Dubai'))
+    fireEvent.click(screen.getByLabelText('Safari'))
     fireEvent.click(screen.getByRole('button', { name: /save tags/i }))
-    expect(await screen.findByText(/at least one place tag/i)).toBeTruthy()
-    expect(writes()).toHaveLength(0)
-    expect(screen.getByRole('button', { name: /save tags/i })).toBeTruthy()
-  })
-
-  it('refuses a listing with no type tag (old data) until one is chosen', async () => {
-    links = [{ listing_id: 'L1', tag_id: 'P1' }]
-    render(<ListingDetailPage id="L1" />)
-    fireEvent.click(await screen.findByRole('button', { name: /edit tags/i }))
-    fireEvent.click(screen.getByRole('button', { name: /save tags/i }))
-    expect(await screen.findByText(/choose at least one type tag/i)).toBeTruthy()
-    expect(writes()).toHaveLength(0)
+    await waitFor(() => expect(screen.queryByRole('button', { name: /save tags/i })).toBeNull())
+    expect(queries.filter((q) => q.table === 'mt_listing_tags' && has(q, 'delete'))).toHaveLength(2)
+    expect(within(await section()).getByText('No tags')).toBeTruthy()
   })
 
   it('cancel leaves the tags unchanged', async () => {
@@ -286,7 +300,6 @@ describe('ListingsPage tags and filters', () => {
   })
 
   const names = () => screen.queryAllByRole('link').map((a) => a.textContent).filter((t) => /safari|cruise|untagged/i.test(t ?? ''))
-  const pick = (label: RegExp, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } })
 
   it("shows each listing's tags", async () => {
     render(<ListingsPage />)
@@ -296,35 +309,39 @@ describe('ListingsPage tags and filters', () => {
     expect(within(screen.getByText('Untagged').closest('tr')!).getByText('No tags')).toBeTruthy()
   })
 
-  it('offers only type tags in the type filter and only place tags in the place filter', async () => {
+  const filterBar = () => screen.getByRole('group', { name: 'Filter by tag' })
+  const tagButton = (name: string) => within(filterBar()).getByRole('button', { name })
+
+  it('shows one filter row per kind, with only the tags listings use', async () => {
     render(<ListingsPage />)
-    await screen.findByRole('option', { name: 'Safari' })
-    const opts = (label: RegExp) =>
-      within(screen.getByLabelText(label)).getAllByRole('option').map((o) => o.textContent)
-    expect(opts(/^type$/i)).toEqual(['All types', 'Cruise', 'Safari'])
-    expect(opts(/^place$/i)).toEqual(['All places', 'Abu Dhabi', 'Dubai'])
+    await screen.findByText('Dune Safari')
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Filter by tag' })).toBeTruthy())
+    const row = (kind: string) => within(within(filterBar()).getByRole('group', { name: kind })).getAllByRole('button').map((b) => b.textContent)
+    expect(row('Place')).toEqual(['Abu Dhabi', 'Dubai'])
+    expect(row('Type')).toEqual(['Cruise', 'Safari'])
   })
 
-  it('filters by type, by place, by both, and clears', async () => {
+  it('filters by one tag, by tags of two kinds (all must match), deselects, and clears', async () => {
     render(<ListingsPage />)
-    await screen.findByRole('option', { name: 'Safari' })
+    await screen.findByText('Dune Safari')
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Filter by tag' })).toBeTruthy())
     expect(names()).toEqual(['Dune Safari', 'Creek Cruise', 'Island Cruise', 'Untagged'])
 
-    pick(/^type$/i, 'T2')
+    fireEvent.click(tagButton('Cruise'))
     expect(names()).toEqual(['Creek Cruise', 'Island Cruise'])
 
-    pick(/^place$/i, 'P1')
+    fireEvent.click(tagButton('Dubai'))
     expect(names()).toEqual(['Creek Cruise'])
 
-    pick(/^type$/i, '')
+    fireEvent.click(tagButton('Cruise'))
     expect(names()).toEqual(['Dune Safari', 'Creek Cruise'])
 
-    pick(/^type$/i, 'T1')
-    pick(/^place$/i, 'P2')
+    fireEvent.click(tagButton('Safari'))
+    fireEvent.click(tagButton('Abu Dhabi'))
     expect(names()).toEqual([])
     expect(screen.getByText(/no listings match these filters/i)).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: /clear filters/i }))
+    fireEvent.click(within(filterBar()).getByRole('button', { name: 'Clear' }))
     expect(names()).toHaveLength(4)
   })
 

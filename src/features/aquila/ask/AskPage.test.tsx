@@ -22,9 +22,15 @@ const listings = [
   { id: 'L2', name: 'Rival Safari', is_own: false, source: 'viator', active: true },
 ]
 
+const links = [
+  { listing_id: 'L1', tag_id: 'P1' }, { listing_id: 'L1', tag_id: 'T1' },
+  { listing_id: 'L2', tag_id: 'P1' }, { listing_id: 'L2', tag_id: 'P2' }, { listing_id: 'L2', tag_id: 'T1' },
+]
+
 function respond(q: Query): Result {
   if (q.table === 'mt_tags') return { data: tags, error: null }
   if (q.table === 'mt_listings') return { data: listings, error: null }
+  if (q.table === 'mt_listing_tags') return { data: links, error: null }
   if (q.table === 'mt_suggestions') return { data: suggestions, error: null }
   return { data: null, error: { message: `unexpected table ${q.table}` } }
 }
@@ -53,42 +59,49 @@ beforeEach(() => {
 })
 
 const ask = () => fireEvent.click(screen.getByRole('button', { name: 'Ask' }))
+/** Clicks a tag in the Ask page's tag picker, once it has loaded. */
+const pick = async (name: string) => {
+  const picker = await screen.findByRole('group', { name: 'Choose tags' })
+  fireEvent.click(within(picker).getByRole('button', { name }))
+}
 const typeQuestion = (v: string) => fireEvent.change(screen.getByLabelText(/^question/i), { target: { value: v } })
 
 describe('AskPage', () => {
-  it('offers place tags and type tags from mt_tags', async () => {
+  it('offers the tags listings use, one row per kind', async () => {
     render(<AskPage />)
-    const places = (await screen.findByText(/^places/i)).closest('fieldset')!
-    expect(within(places).getByLabelText('Dubai')).toBeTruthy()
-    expect(within(places).getByLabelText('Abu Dhabi')).toBeTruthy()
-    expect(within(places).queryByLabelText('Safari')).toBeNull()
-    const types = screen.getByText(/^types/i).closest('fieldset')!
-    expect(within(types).getByLabelText('Safari')).toBeTruthy()
+    const picker = await screen.findByRole('group', { name: 'Choose tags' })
+    const row = (kind: string) => within(within(picker).getByRole('group', { name: kind })).getAllByRole('button').map((b) => b.textContent)
+    expect(row('Place')).toEqual(['Abu Dhabi', 'Dubai'])
+    expect(row('Type')).toEqual(['Safari'])
   })
 
-  it('needs a place tag and a question, and calls nothing until both are given', async () => {
+  it('needs only a question: no tags means every listing', async () => {
     render(<AskPage />)
-    await screen.findByLabelText('Dubai')
+    await screen.findByRole('group', { name: 'Choose tags' })
     ask()
-    expect(await screen.findByText('Choose at least one place tag.')).toBeTruthy()
-    expect(screen.getByText('Type a question.')).toBeTruthy()
+    expect(await screen.findByText('Type a question.')).toBeTruthy()
     expect(invoke()).not.toHaveBeenCalled()
+    typeQuestion('Which competitor tour has the best reviews?')
+    ask()
+    await waitFor(() => expect(invoke()).toHaveBeenCalledTimes(1))
+    expect(invoke().mock.calls[0]).toEqual(['aquila-ask', {
+      body: { question: 'Which competitor tour has the best reviews?', tag_ids: [] },
+    }])
   })
 
-  it('sends the chosen places and types together with the question to aquila-ask', async () => {
+  it('sends the chosen tags of any kinds together with the question to aquila-ask', async () => {
     render(<AskPage />)
-    fireEvent.click(await screen.findByLabelText('Abu Dhabi'))
-    fireEvent.click(screen.getByLabelText('Dubai'))
-    fireEvent.click(screen.getByLabelText('Safari'))
+    await pick('Abu Dhabi')
+    await pick('Safari')
     typeQuestion('  Who is cheapest?  ')
     ask()
     await waitFor(() => expect(invoke()).toHaveBeenCalledTimes(1))
-    expect(invoke().mock.calls[0]).toEqual(['aquila-ask', { body: { question: 'Who is cheapest?', tag_ids: ['P2', 'P1', 'T1'] } }])
+    expect(invoke().mock.calls[0]).toEqual(['aquila-ask', { body: { question: 'Who is cheapest?', tag_ids: ['P2', 'T1'] } }])
   })
 
   it('shows the answer with the listings and capture dates it used', async () => {
     render(<AskPage />)
-    fireEvent.click(await screen.findByLabelText('Dubai'))
+    await pick('Dubai')
     typeQuestion('Who is cheapest?')
     ask()
     const answer = await screen.findByRole('region', { name: 'Answer' })
@@ -108,7 +121,7 @@ describe('AskPage', () => {
       }),
     }
     render(<AskPage />)
-    fireEvent.click(await screen.findByLabelText('Dubai'))
+    await pick('Dubai')
     typeQuestion('Q')
     ask()
     expect(await screen.findByText('Could not get an answer: Only the AQUILA owner can use Ask AI.')).toBeTruthy()
@@ -118,7 +131,7 @@ describe('AskPage', () => {
   it('says when an answer could not be saved to past answers', async () => {
     invokeResult = { data: { ...(invokeResult.data as object), saved: false, save_error: 'permission denied' }, error: null }
     render(<AskPage />)
-    fireEvent.click(await screen.findByLabelText('Dubai'))
+    await pick('Dubai')
     typeQuestion('Q')
     ask()
     expect(await screen.findByText(/not saved to past answers: permission denied/i)).toBeTruthy()
@@ -154,7 +167,7 @@ describe('AskPage', () => {
 
   it('reloads past answers after asking', async () => {
     render(<AskPage />)
-    fireEvent.click(await screen.findByLabelText('Dubai'))
+    await pick('Dubai')
     typeQuestion('Q')
     ask()
     await screen.findByRole('region', { name: 'Answer' })
@@ -168,7 +181,7 @@ describe('AskPage', () => {
 
   it('never writes to any table itself', async () => {
     render(<AskPage />)
-    fireEvent.click(await screen.findByLabelText('Dubai'))
+    await pick('Dubai')
     typeQuestion('Q')
     ask()
     await screen.findByRole('region', { name: 'Answer' })

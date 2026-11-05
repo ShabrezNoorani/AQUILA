@@ -29,7 +29,7 @@ AQUILA does not publish anything, contact customers, change prices, or act on co
 | Listings (own and competitor), with edit and delete | Built and tested |
 | Snapshots (dated records of a listing), with edit and delete | Built and tested |
 | Reviews on a listing, with add, edit and delete | Built and tested |
-| Tags: one type and at least one place per listing | Built and tested |
+| Tags: any number per listing, of any kind (for example type, place, food) | Built and tested |
 | Option rows with price per person, traveller count and price date | Built and tested |
 | Assisted capture from a Viator page via a browser bookmark | Built and tested with saved sample pages |
 | Atomic snapshot save (snapshot and options saved together or not at all) | Database function created; confirm the app calls it |
@@ -46,7 +46,7 @@ AQUILA does not publish anything, contact customers, change prices, or act on co
 ## 3. Concepts
 
 - **Listing.** One tour product on one website. Each listing is marked as the owner's own tour or as a competitor's. A listing has a source (Viator, TripAdvisor, GetYourGuide, or manual), a link, and an active flag.
-- **Tags.** Every listing has exactly one *type* tag (for example walking, boat, food) and at least one *place* tag (for example Notre Dame, Ile de la Cite, Le Marais). Tags are created by the owner; nothing is hard-coded. A listing may have several place tags.
+- **Tags.** Every tag has a *kind* and a *name*, for example kind *type* with walking, boat or food, or kind *place* with Notre Dame, Ile de la Cite or Le Marais. The owner creates tags and can add new kinds at any time; nothing is hard-coded. A listing can have any number of tags of any kinds, or none, and mixing is allowed (for example Food + Walking + Interior). A tag with the same kind and the same name, ignoring capitals and extra spaces, is the same tag. Filters show one row per kind, and when several tags are selected a listing must have all of them.
 - **Snapshot.** A dated record of a listing's details at one moment: title, duration, languages, group type, highlights, inclusions, exclusions, the overview, itinerary, rating, review count, and urgency text. Snapshots show change over time. The raw captured page is kept with each snapshot.
 - **Option.** One bookable variant inside a snapshot, with its name, description, price per person, number of travellers the price is for, and the date the price applies to. Options are stored in their own table so they can be compared across snapshots.
 - **Review.** A review held on a listing (not on a snapshot), with a star rating from 1 to 5, the review text, an optional date as shown, and a source. Reviewers' names are not stored.
@@ -85,11 +85,11 @@ Reviews are added by hand from the listing page: star rating, text, and optional
 
 ## 5. How Ask AI works
 
-1. The owner opens **Ask AI**, chooses one or more place tags (and optionally type tags), and types a question.
+1. The owner opens **Ask AI**, optionally chooses tags (shown one row per kind), and types a question. With no tags, every listing is used; with tags, only listings that have all the chosen tags.
 2. The page sends the question and tag identifiers to the `aquila-ask` Supabase Edge Function, with the owner's sign-in.
 3. The function checks the caller is the owner. Anyone else receives a 403 response and no data.
 4. The function reads the data using the owner's own sign-in, so the database's row-level security applies.
-5. It assembles the data **grouped by place tag**: each listing with its tags, whether it is own or competitor, its latest snapshot with options, price dates and traveller counts, its timing rules, and its reviews as star counts and text. Reviewers' names are never included.
+5. It assembles the data **grouped by company**, our own (OWN) company first, then competitors, then listings with no company: each listing with its company name, whether that company is OWN, all its tags with their kinds, its latest snapshot with options, price dates and traveller counts, its timing rules, and its reviews as star counts and text. Reviewers' names are never included.
 6. It sends the question and this data to Google's Gemini model, using the model name `gemini-flash-lite-latest`, which is defined in one place in the code and can be changed there.
 7. The model is instructed to cite listing names and capture dates, to say when data is missing, and not to guess.
 8. The answer is returned with the list of listings and snapshots it used, and saved as a suggestion.
@@ -118,7 +118,7 @@ All tables are in the same Supabase project as AURELIA, and all are prefixed `mt
 | Table | Purpose |
 |---|---|
 | `mt_listings` | Each tour product: name, own or competitor, source, link, competitor name, active flag, and capture cadence in days |
-| `mt_tags` | Every tag: kind (type or place) and name. Names are unique per kind |
+| `mt_tags` | Every tag: kind (any text, for example type or place) and name. Names are unique per kind |
 | `mt_listing_tags` | Which tags belong to which listing |
 | `mt_snapshots` | Dated records of a listing's details, status, and raw page |
 | `mt_snapshot_options` | One row per option per snapshot, with price per person, travellers, price date and sort order |
@@ -170,7 +170,7 @@ Database function: `mt_save_snapshot` saves a snapshot and its options in one tr
 - **Edge Function:** a small server program that runs on Supabase, here `aquila-ask`.
 - **Row-level security (RLS):** database rules that decide which rows each user may read or change.
 - **Snapshot:** a dated record of a listing.
-- **Tag:** a label on a listing. Type tags say what kind of tour it is. Place tags say where it runs.
+- **Tag:** a label on a listing, with a kind and a name. For example, type tags say what kind of tour it is and place tags say where it runs; the owner can add other kinds.
 - **Partial / complete:** the status given to a snapshot, based on whether its core fields and at least one priced option were found.
 
 ---

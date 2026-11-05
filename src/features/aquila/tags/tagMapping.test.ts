@@ -3,11 +3,16 @@ import type { Listing, Tag } from '../types'
 import {
   filterListings,
   findTagByName,
-  listingTagsError,
+  groupByKind,
+  hasAllTags,
+  kindLabel,
+  kindsOf,
+  normaliseKind,
   normaliseTagName,
   tagFormToRow,
   tagsByListing,
   tagsOfKind,
+  usedTags,
   withTag,
 } from './tagMapping'
 
@@ -41,41 +46,37 @@ describe('tag names', () => {
     expect(findTagByName(both, 'place', 'safari')?.id).toBe('P9')
   })
 
-  it('rejects a blank name and an unknown kind', () => {
+  it('rejects a blank name or kind, and accepts any other kind, stored lower-case', () => {
     expect(tagFormToRow('   ', 'type')).toEqual({ ok: false, error: 'Tag name is required' })
-    expect(tagFormToRow('Desert', 'region').ok).toBe(false)
+    expect(tagFormToRow('Desert', '  ')).toEqual({ ok: false, error: 'Tag kind is required' })
     expect(tagFormToRow('  Desert ', 'place')).toEqual({ ok: true, row: { name: 'Desert', kind: 'place' } })
+    expect(tagFormToRow('Croissant', '  Food ')).toEqual({ ok: true, row: { name: 'Croissant', kind: 'food' } })
+  })
+
+  it('treats kinds the same whatever their capitals and spaces', () => {
+    expect(normaliseKind('  Place  ')).toBe('place')
+    expect(findTagByName(tags, 'PLACE', 'dubai')?.id).toBe('P1')
+    expect(kindLabel('food')).toBe('Food')
   })
 })
 
-describe('listingTagsError: at least one type tag and at least one place tag', () => {
-  it('accepts one type and one or more places', () => {
-    expect(listingTagsError(['T1', 'P1'], tags)).toBeNull()
-    expect(listingTagsError(['T1', 'P1', 'P2'], tags)).toBeNull()
+describe('kinds', () => {
+  const mixed: Tag[] = [
+    ...tags,
+    { id: 'F1', name: 'Bakery', kind: 'food' },
+    { id: 'I1', name: 'Interior', kind: 'type' },
+  ]
+
+  it('lists every kind in use, A to Z, with nothing hard-coded', () => {
+    expect(kindsOf(mixed)).toEqual(['food', 'place', 'type'])
   })
 
-  it('rejects no tags at all, naming both problems', () => {
-    const e = listingTagsError([], tags)!
-    expect(e).toMatch(/one type tag/i)
-    expect(e).toMatch(/at least one place tag/i)
-  })
-
-  it('rejects a missing type', () => {
-    expect(listingTagsError(['P1'], tags)).toMatch(/choose at least one type tag/i)
-  })
-
-  it('accepts two type tags (several of the same kind are allowed)', () => {
-    expect(listingTagsError(['T1', 'T2', 'P1'], tags)).toBeNull()
-    expect(listingTagsError(['T1', 'T2', 'P1', 'P2'], tags)).toBeNull()
-  })
-
-  it('rejects a missing place', () => {
-    expect(listingTagsError(['T1'], tags)).toMatch(/at least one place tag/i)
-  })
-
-  it('ignores unknown ids and counts duplicates once', () => {
-    expect(listingTagsError(['T1', 'T1', 'P1', 'ghost'], tags)).toBeNull()
-    expect(listingTagsError(['ghost', 'P1'], tags)).toMatch(/one type tag/i)
+  it('groups tags by kind, each group sorted by name', () => {
+    expect(groupByKind(mixed).map((g) => [g.kind, g.tags.map((t) => t.name)])).toEqual([
+      ['food', ['Bakery']],
+      ['place', ['Abu Dhabi', 'Dubai']],
+      ['type', ['Cruise', 'Interior', 'Safari']],
+    ])
   })
 })
 
@@ -103,8 +104,8 @@ describe('grouping and filtering', () => {
   ]
   const map = tagsByListing(links, tags)
 
-  it('groups tags by listing, types first, and drops links to unknown tags', () => {
-    expect(map.get('L2')!.map((t) => t.name)).toEqual(['Cruise', 'Abu Dhabi', 'Dubai'])
+  it('groups tags by listing, by kind (A to Z) then name, and drops links to unknown tags', () => {
+    expect(map.get('L2')!.map((t) => t.name)).toEqual(['Abu Dhabi', 'Dubai', 'Cruise'])
     expect(map.has('L3')).toBe(false)
   })
 
@@ -112,12 +113,19 @@ describe('grouping and filtering', () => {
     expect(tagsOfKind(tags, 'place').map((t) => t.name)).toEqual(['Abu Dhabi', 'Dubai'])
   })
 
-  it('filters by type, by place, and by both', () => {
-    const ids = (f: { typeId: string; placeId: string }) => filterListings(listings, map, f).map((l) => l.id)
-    expect(ids({ typeId: '', placeId: '' })).toEqual(['L1', 'L2', 'L3'])
-    expect(ids({ typeId: 'T1', placeId: '' })).toEqual(['L1'])
-    expect(ids({ typeId: '', placeId: 'P1' })).toEqual(['L1', 'L2'])
-    expect(ids({ typeId: 'T2', placeId: 'P2' })).toEqual(['L2'])
-    expect(ids({ typeId: 'T1', placeId: 'P2' })).toEqual([])
+  it('lists only the tags some listing uses', () => {
+    expect(usedTags(map).map((t) => t.id)).toEqual(['P2', 'P1', 'T2', 'T1'])
+    expect(usedTags(tagsByListing([{ listing_id: 'L1', tag_id: 'P1' }], tags)).map((t) => t.id)).toEqual(['P1'])
+  })
+
+  it('filters by any selected tags, of any kinds: a listing must carry all of them', () => {
+    const ids = (selected: string[]) => filterListings(listings, map, selected).map((l) => l.id)
+    expect(ids([])).toEqual(['L1', 'L2', 'L3'])
+    expect(ids(['T1'])).toEqual(['L1'])
+    expect(ids(['P1'])).toEqual(['L1', 'L2'])
+    expect(ids(['T2', 'P2'])).toEqual(['L2'])
+    expect(ids(['P1', 'P2'])).toEqual(['L2'])
+    expect(ids(['T1', 'P2'])).toEqual([])
+    expect(hasAllTags(map, 'L3', ['T1'])).toBe(false)
   })
 })

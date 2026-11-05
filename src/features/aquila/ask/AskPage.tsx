@@ -1,10 +1,12 @@
-// #/ask: choose place tags (and optionally type tags), ask a question, see the answer with the
-// listings and capture dates it used, and look back at past answers.
+// #/ask: optionally choose tags (grouped by kind; a listing must carry all chosen tags), ask a
+// question, see the answer with the listings and capture dates it used, and look back at past answers.
+// The function groups the data by company, so questions can compare companies.
 
 import { useEffect, useState, type FormEvent } from 'react'
-import { fetchListings, fetchTags } from '../api'
+import { fetchAllListingTags, fetchListings, fetchTags } from '../api'
 import { hrefFor } from '../router'
-import { tagsOfKind } from '../tags/tagMapping'
+import TagFilter from '../tags/TagFilter'
+import { tagsByListing, usedTags } from '../tags/tagMapping'
 import type { Listing, Suggestion, Tag } from '../types'
 import { Badge, Button, Card, EmptyState, FormError, Page, TextField } from '../ui'
 import { askQuestion, fetchSuggestions } from './askApi'
@@ -16,41 +18,6 @@ import {
   type AskErrors,
   type AskResponse,
 } from './askMapping'
-
-const pill = (on: boolean) =>
-  `flex cursor-pointer items-center gap-2 rounded-card border px-3 py-1.5 text-sm transition-colors ${
-    on ? 'border-ink-2 bg-paper font-medium text-ink' : 'border-line bg-surface text-ink-2 hover:bg-paper hover:text-ink'}`
-
-function TagChoices({ legend, tags, selected, onToggle, error, errorId }: {
-  legend: string
-  tags: Tag[]
-  selected: string[]
-  onToggle: (id: string, on: boolean) => void
-  error?: string
-  errorId: string
-}) {
-  return (
-    <fieldset className="space-y-1.5" aria-describedby={error ? errorId : undefined}>
-      <legend className="mb-1.5 text-sm font-medium text-ink">{legend}</legend>
-      {tags.length === 0 ? (
-        <p className="text-sm text-ink-3">
-          None yet. <a href={hrefFor.tags()} className="font-medium text-accent hover:underline">Add them on the Tags page</a>.
-        </p>
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          {tags.map((t) => (
-            <label key={t.id} className={pill(selected.includes(t.id))}>
-              <input type="checkbox" className="accent-ink" checked={selected.includes(t.id)}
-                onChange={(e) => onToggle(t.id, e.target.checked)} />
-              {t.name}
-            </label>
-          ))}
-        </div>
-      )}
-      {error && <p role="alert" id={errorId} className="text-sm text-negative-deep">{error}</p>}
-    </fieldset>
-  )
-}
 
 function Answer({ result }: { result: AskResponse }) {
   return (
@@ -95,8 +62,8 @@ function PastAnswer({ s, tags, listings }: { s: Suggestion; tags: Tag[]; listing
         <Badge tone={s.status === 'error' ? 'negative' : 'positive'}>{s.status === 'error' ? 'Failed' : 'Answered'}</Badge>
       </header>
       <div className="flex flex-wrap gap-1">
-        {t.places.map((n) => <Badge key={`p-${n}`}>{n}</Badge>)}
-        {t.types.map((n) => <Badge key={`t-${n}`} tone="strong">{n}</Badge>)}
+        {t.groups.length === 0 && t.missing === 0 && <Badge>All listings</Badge>}
+        {t.groups.flatMap((g) => g.names.map((n) => <Badge key={`${g.kind}-${n}`} title={`${g.kind}: ${n}`}>{n}</Badge>))}
         {t.missing > 0 && <Badge>{t.missing} deleted tag{t.missing === 1 ? '' : 's'}</Badge>}
       </div>
       <p className="whitespace-pre-line text-sm leading-relaxed text-ink">
@@ -119,10 +86,10 @@ function PastAnswer({ s, tags, listings }: { s: Suggestion; tags: Tag[]; listing
 
 export default function AskPage() {
   const [tags, setTags] = useState<Tag[] | null>(null)
+  const [filterTags, setFilterTags] = useState<Tag[]>([])
   const [listings, setListings] = useState<Listing[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [placeIds, setPlaceIds] = useState<string[]>([])
-  const [typeIds, setTypeIds] = useState<string[]>([])
+  const [tagIds, setTagIds] = useState<string[]>([])
   const [question, setQuestion] = useState('')
   const [errors, setErrors] = useState<AskErrors>({})
   const [askError, setAskError] = useState<string | null>(null)
@@ -134,11 +101,13 @@ export default function AskPage() {
 
   useEffect(() => {
     let live = true
-    Promise.all([fetchTags(), fetchListings()])
-      .then(([t, l]) => {
+    Promise.all([fetchTags(), fetchListings(), fetchAllListingTags()])
+      .then(([t, l, links]) => {
         if (!live) return
         setTags(t)
         setListings(l)
+        // The picker offers the tags that listings use, grouped by kind.
+        setFilterTags(usedTags(tagsByListing(links, t)))
       })
       .catch((e: Error) => live && setLoadError(e.message))
     return () => {
@@ -160,14 +129,11 @@ export default function AskPage() {
     }
   }, [pastKey])
 
-  const toggle = (set: (f: (ids: string[]) => string[]) => void) => (id: string, on: boolean) =>
-    set((ids) => (on ? [...ids.filter((x) => x !== id), id] : ids.filter((x) => x !== id)))
-
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     if (!tags) return
     setAskError(null)
-    const built = buildAskRequest({ question, placeIds, typeIds }, tags)
+    const built = buildAskRequest({ question, tagIds }, tags)
     if (!built.ok) {
       setErrors(built.errors)
       return
@@ -194,17 +160,22 @@ export default function AskPage() {
       {tags && (
         <Card as="section" aria-label="Ask a question">
           <form onSubmit={handleSubmit} noValidate aria-label="Ask a question" className="space-y-5">
-            <TagChoices legend="Places * (one or more)" tags={tagsOfKind(tags, 'place')} selected={placeIds}
-              onToggle={(id, on) => {
-                toggle(setPlaceIds)(id, on)
-                setErrors((e) => ({ ...e, places: undefined }))
-              }}
-              error={errors.places} errorId="ask-places-error" />
-            <TagChoices legend="Types (optional)" tags={tagsOfKind(tags, 'type')} selected={typeIds}
-              onToggle={toggle(setTypeIds)} errorId="ask-types-error" />
+            <fieldset className="space-y-2">
+              <legend className="mb-1 text-sm font-medium text-ink">Tags (optional)</legend>
+              <p className="text-sm text-ink-3">
+                No tags: every listing is used. With tags: only listings that have all the chosen tags.
+              </p>
+              {filterTags.length === 0 ? (
+                <p className="text-sm text-ink-3">
+                  No tags on any listing yet. <a href={hrefFor.tags()} className="font-medium text-accent hover:underline">Manage tags</a>.
+                </p>
+              ) : (
+                <TagFilter label="Choose tags" tags={filterTags} selected={tagIds} onChange={setTagIds} />
+              )}
+            </fieldset>
             <TextField id="ask-question" label="Question *" value={question} multiline rows={3}
-              placeholder="e.g. How do competitor prices for 2 travelers compare with ours?"
-              help="The answer only uses your saved listings, snapshots, timing rules and reviews for these tags."
+              placeholder="e.g. Which competitor tour has the best reviews?"
+              help="The answer only uses your saved listings, grouped by company, with their snapshots, timing rules and reviews."
               onChange={setQuestion} error={errors.question} />
             {askError && <FormError>Could not get an answer: {askError}</FormError>}
             <div className="flex justify-end">

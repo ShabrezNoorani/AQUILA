@@ -1,10 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
-import { fetchAllListingTags, fetchListings, fetchTags } from './api'
+import { fetchAllListingTags, fetchCompanies, fetchListings, fetchTags } from './api'
 import { hrefFor } from './router'
-import { filterListings, tagsByListing, tagsOfKind, type ListingFilters } from './tags/tagMapping'
+import TagFilter from './tags/TagFilter'
+import { filterListings, tagsByListing, usedTags } from './tags/tagMapping'
 import { TagChips } from './tags/TagPicker'
-import type { Listing, ListingTag, Tag } from './types'
-import { Badge, Button, ButtonLink, Card, EmptyState, FormError, Page, Table, THead, Td, Th, Tr, inputClass } from './ui'
+import type { Company, Listing, ListingTag, Tag } from './types'
+import { Badge, ButtonLink, Card, EmptyState, FormError, Page, Table, THead, Td, Th, Tr } from './ui'
+
+/** The listing's company with an OWN badge when it is ours, or "Unassigned". */
+function CompanyCell({ company, loading }: { company?: Company; loading: boolean }) {
+  if (loading) return <span className="text-ink-3">…</span>
+  if (!company) return <span className="text-ink-3">Unassigned</span>
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <a href={hrefFor.company(company.id)} className="text-ink-2 hover:text-accent">{company.name}</a>
+      {company.is_own && <Badge tone="strong">OWN</Badge>}
+    </span>
+  )
+}
 
 export default function ListingsPage() {
   const [listings, setListings] = useState<Listing[] | null>(null)
@@ -12,7 +25,9 @@ export default function ListingsPage() {
   const [tags, setTags] = useState<Tag[]>([])
   const [links, setLinks] = useState<ListingTag[]>([])
   const [tagError, setTagError] = useState<string | null>(null)
-  const [filters, setFilters] = useState<ListingFilters>({ typeId: '', placeId: '' })
+  const [selected, setSelected] = useState<string[]>([])
+  const [companies, setCompanies] = useState<Company[] | null>(null)
+  const [companyError, setCompanyError] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
@@ -27,14 +42,20 @@ export default function ListingsPage() {
         setLinks(l)
       })
       .catch((e: Error) => live && setTagError(e.message))
+    // Companies load separately too, so listings still show if they fail.
+    fetchCompanies()
+      .then((rows) => live && setCompanies(rows))
+      .catch((e: Error) => live && setCompanyError(e.message))
     return () => {
       live = false
     }
   }, [])
 
   const tagMap = useMemo(() => tagsByListing(links, tags), [links, tags])
-  const shown = listings ? filterListings(listings, tagMap, filters) : null
-  const filtering = filters.typeId !== '' || filters.placeId !== ''
+  const filterTags = useMemo(() => usedTags(tagMap), [tagMap])
+  const active = selected.filter((id) => filterTags.some((t) => t.id === id))
+  const shown = listings ? filterListings(listings, tagMap, active) : null
+  const companyById = new Map((companies ?? []).map((c) => [c.id, c]))
 
   return (
     <Page title="Listings"
@@ -45,40 +66,17 @@ export default function ListingsPage() {
         </>
       )}>
       {tagError && <FormError>Could not load tags: {tagError}</FormError>}
+      {companyError && <FormError>Could not load companies: {companyError}</FormError>}
       {error && <FormError>Could not load listings: {error}</FormError>}
       {!error && !listings && <p className="text-sm text-ink-3">Loading…</p>}
       {listings && listings.length === 0 && (
         <EmptyState title="No listings yet." description="Add your own listing or a competitor’s to start tracking it." />
       )}
 
-      {listings && listings.length > 0 && (
-        <Card padded={false} className="flex flex-wrap items-end gap-4 px-6 py-4">
-          <div className="w-48 space-y-1.5">
-            <label htmlFor="filter-type" className="block text-xs font-medium text-ink-3">Type</label>
-            <select id="filter-type" value={filters.typeId} className={inputClass}
-              onChange={(e) => setFilters((f) => ({ ...f, typeId: e.target.value }))}>
-              <option value="">All types</option>
-              {tagsOfKind(tags, 'type').map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          </div>
-          <div className="w-48 space-y-1.5">
-            <label htmlFor="filter-place" className="block text-xs font-medium text-ink-3">Place</label>
-            <select id="filter-place" value={filters.placeId} className={inputClass}
-              onChange={(e) => setFilters((f) => ({ ...f, placeId: e.target.value }))}>
-              <option value="">All places</option>
-              {tagsOfKind(tags, 'place').map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          </div>
-          {filtering && (
-            <Button variant="ghost" onClick={() => setFilters({ typeId: '', placeId: '' })}>
-              Clear filters
-            </Button>
-          )}
-          {shown && (
-            <p className="ml-auto self-center text-sm text-ink-3">
-              {shown.length} of {listings.length}
-            </p>
-          )}
+      {listings && listings.length > 0 && filterTags.length > 0 && (
+        <Card padded={false} className="space-y-2 px-6 py-4">
+          <TagFilter tags={filterTags} selected={active} onChange={setSelected} />
+          {shown && <p className="text-sm text-ink-3">{shown.length} of {listings.length}</p>}
         </Card>
       )}
 
@@ -91,7 +89,7 @@ export default function ListingsPage() {
           <THead>
             <tr>
               <Th>Name</Th>
-              <Th>Type</Th>
+              <Th>Company</Th>
               <Th>Source</Th>
               <Th>Status</Th>
               <Th>Tags</Th>
@@ -103,7 +101,7 @@ export default function ListingsPage() {
                 <Td>
                   <a href={hrefFor.listing(l.id)} className="font-medium text-ink hover:text-accent hover:underline">{l.name}</a>
                 </Td>
-                <Td className="text-ink-3">{l.is_own ? 'Own' : 'Competitor'}</Td>
+                <Td><CompanyCell company={l.company_id ? companyById.get(l.company_id) : undefined} loading={!companies && !companyError} /></Td>
                 <Td className="text-ink-3">{l.source}</Td>
                 <Td><Badge tone={l.active ? 'positive' : 'neutral'}>{l.active ? 'Active' : 'Inactive'}</Badge></Td>
                 <Td><TagChips tags={tagMap.get(l.id) ?? []} /></Td>

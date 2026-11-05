@@ -3,11 +3,12 @@
 // appear under "Unassigned". Tag names always come from mt_tags; none are written here.
 
 import { useEffect, useState, type FormEvent } from 'react'
-import { fetchAllListingTags, fetchListings, fetchTags, listCompanies, renameCompany } from '../api'
+import { createCompany, fetchAllListingTags, fetchListings, fetchTags, listCompanies, renameCompany } from '../api'
 import { hrefFor } from '../router'
-import { tagsByListing } from '../tags/tagMapping'
+import TagFilter from '../tags/TagFilter'
+import { byKindThenName, hasAllTags, tagsByListing, usedTags } from '../tags/tagMapping'
 import { TagChips } from '../tags/TagPicker'
-import { TAG_KINDS, type CompanyWithCount, type Listing, type Tag } from '../types'
+import type { CompanyWithCount, Listing, Tag } from '../types'
 import { Badge, Button, EmptyState, FormError, Page, Table, Td, Th, THead, Tr, inputClass } from '../ui'
 
 /** The id used in #/companies/<id> for listings that have no company. */
@@ -68,7 +69,7 @@ type Data = {
   listings: Listing[]
   /** Each listing's tags. */
   tagMap: Map<string, Tag[]>
-  /** Every tag used by at least one listing: types first, then places, each by name. */
+  /** Every tag used by at least one listing, by kind then name. */
   usedTags: Tag[]
 }
 
@@ -77,12 +78,7 @@ async function loadData(): Promise<Data> {
     listCompanies(), fetchListings(), fetchTags(), fetchAllListingTags(),
   ])
   const tagMap = tagsByListing(links, tags)
-  const used = new Map<string, Tag>()
-  for (const list of tagMap.values()) for (const t of list) used.set(t.id, t)
-  const usedTags = [...used.values()].sort(
-    (a, b) => TAG_KINDS.indexOf(a.kind) - TAG_KINDS.indexOf(b.kind) || a.name.localeCompare(b.name),
-  )
-  return { companies, listings, tagMap, usedTags }
+  return { companies, listings, tagMap, usedTags: usedTags(tagMap) }
 }
 
 function useData() {
@@ -100,26 +96,17 @@ function useData() {
   return { data, setData, error }
 }
 
-/** True when the listing carries every selected tag (and always when none are selected). */
-const hasAllTags = (tagMap: Map<string, Tag[]>, listingId: string, selected: string[]) => {
-  if (!selected.length) return true
-  const ids = new Set((tagMap.get(listingId) ?? []).map((t) => t.id))
-  return selected.every((id) => ids.has(id))
-}
-
 /** Sorts by name ignoring capitals; A to Z or Z to A. */
 const byName = (sort: Sort) => (a: { name: string }, b: { name: string }) => {
   const r = a.name.toLocaleLowerCase().localeCompare(b.name.toLocaleLowerCase())
   return sort === 'az' ? r : -r
 }
 
-/** Unique tags of several listings, types first, then by name. */
+/** Unique tags of several listings, by kind then name. */
 function tagsOfListings(tagMap: Map<string, Tag[]>, listings: Listing[]): Tag[] {
   const out = new Map<string, Tag>()
   for (const l of listings) for (const t of tagMap.get(l.id) ?? []) out.set(t.id, t)
-  return [...out.values()].sort(
-    (a, b) => TAG_KINDS.indexOf(a.kind) - TAG_KINDS.indexOf(b.kind) || a.name.localeCompare(b.name),
-  )
+  return [...out.values()].sort(byKindThenName)
 }
 
 const plural = (n: number) => `${n} ${n === 1 ? 'listing' : 'listings'}`
@@ -128,28 +115,6 @@ const plural = (n: number) => `${n} ${n === 1 ? 'listing' : 'listings'}`
 
 function OwnBadge() {
   return <Badge tone="strong">OWN</Badge>
-}
-
-/** Every used tag as a toggle. Several can be selected; a listing must carry all of them. */
-function TagFilter({ tags, selected, onChange }: { tags: Tag[]; selected: string[]; onChange: (ids: string[]) => void }) {
-  if (!tags.length) return null
-  const on = new Set(selected)
-  const toggle = (id: string) => onChange(on.has(id) ? selected.filter((s) => s !== id) : [...selected, id])
-  return (
-    <div role="group" aria-label="Filter by tag" className="flex flex-wrap items-center gap-2">
-      <span className="text-sm font-medium text-ink-3">Tags:</span>
-      {tags.map((t) => (
-        <button key={t.id} type="button" aria-pressed={on.has(t.id)} data-kind={t.kind} onClick={() => toggle(t.id)}
-          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-            on.has(t.id)
-              ? 'border-accent bg-accent/8 text-accent'
-              : 'border-line bg-surface text-ink-2 hover:bg-paper hover:text-ink'}`}>
-          {t.name}
-        </button>
-      ))}
-      {selected.length > 0 && <Button size="sm" variant="ghost" onClick={() => onChange([])}>Clear</Button>}
-    </div>
-  )
 }
 
 /** One company's name, as a link, with an inline rename form. */
@@ -201,6 +166,48 @@ function NameCell({ company, onRenamed }: { company: CompanyWithCount; onRenamed
   )
 }
 
+/** "New company": a name and an OWN tick box. A name that already exists is not duplicated. */
+function NewCompanyForm({ onCreated, onCancel }: { onCreated: (c: CompanyWithCount, existed: boolean) => void; onCancel: () => void }) {
+  const [name, setName] = useState('')
+  const [own, setOwn] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  async function save(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setBusy(true)
+    try {
+      const { company, existed } = await createCompany(name, own)
+      onCreated({ ...company, listing_count: 0 }, existed)
+    } catch (err) {
+      setError((err as Error).message)
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={save} noValidate aria-label="New company"
+      className="space-y-4 rounded-card border border-line bg-surface p-5 shadow-sm shadow-ink/5">
+      <div className="space-y-1.5">
+        <label htmlFor="new-company-name" className="block text-sm font-medium text-ink">Company name *</label>
+        <input id="new-company-name" className={`${inputClass} max-w-md`} value={name} disabled={busy} autoFocus
+          onChange={(e) => setName(e.target.value)} />
+      </div>
+      <label className="flex items-center gap-2 text-sm font-medium text-ink">
+        <input type="checkbox" className="h-4 w-4 accent-ink" checked={own} disabled={busy}
+          onChange={(e) => setOwn(e.target.checked)} />
+        This is ours (OWN)
+      </label>
+      {error && <p role="alert" className="text-sm text-negative-deep">Could not add: {error}</p>}
+      <div className="flex gap-2">
+        <Button type="submit" variant="primary" disabled={busy}>{busy ? 'Adding…' : 'Add company'}</Button>
+        <Button onClick={onCancel} disabled={busy}>Cancel</Button>
+      </div>
+    </form>
+  )
+}
+
 // ---------- the companies page ----------
 
 /** A company (or the Unassigned group) as shown: its listings, the matching ones, and their tags. */
@@ -211,6 +218,18 @@ function CompaniesOverview() {
   const [view, setView] = useState<View>(() => readStored(() => localStorage, VIEW_KEY, ['library', 'list'], 'library'))
   const [sort, setSort] = useState<Sort>(() => readStored(() => localStorage, SORT_KEY, ['az', 'za'], 'az'))
   const [selected, setSelected] = useSelectedTags()
+  const [adding, setAdding] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  const added = (company: CompanyWithCount, existed: boolean) => {
+    setAdding(false)
+    if (existed) {
+      setNotice(`“${company.name}” already exists, so no new company was added.`)
+      return
+    }
+    setNotice(`Added “${company.name}”${company.is_own ? ' as OWN' : ''}.`)
+    setData((d) => d && { ...d, companies: [...d.companies, company] })
+  }
 
   const chooseView = (v: View) => {
     setView(v)
@@ -245,7 +264,12 @@ function CompaniesOverview() {
   const count = (r: Row) => (filtering ? `${r.matching} of ${plural(r.total)} match` : plural(r.total))
 
   return (
-    <Page title="Companies" meta="Companies and their listings. Our own company is marked OWN.">
+    <Page title="Companies" meta="Companies and their listings. Our own company is marked OWN."
+      actions={data && !adding
+        ? <Button variant="primary" onClick={() => { setNotice(null); setAdding(true) }}>New company</Button>
+        : undefined}>
+      {adding && <NewCompanyForm onCreated={added} onCancel={() => setAdding(false)} />}
+      {notice && <p role="status" className="rounded-card border border-line bg-surface px-3 py-2 text-sm text-ink-2">{notice}</p>}
       {error && <FormError>Could not load companies: {error}</FormError>}
       {!error && !data && <p className="text-sm text-ink-3">Loading…</p>}
       {nothingYet && <EmptyState title="No companies yet." description="A company is added when you create a listing for it." />}

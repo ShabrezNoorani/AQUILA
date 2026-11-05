@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { callsOf, createFakeSupabase, type Query, type Result } from './test/fakeSupabase'
 import { supabase } from '../../lib/supabase'
 import { deleteSnapshot, updateListing, updateSnapshot } from './api'
 import { snapshotFormToRow, snapshotRowToForm } from './mapping'
 import ListingDetailPage from './ListingDetailPage'
 import SnapshotList from './SnapshotList'
+import CompaniesPage from './companies/CompaniesPage'
 import type { Snapshot, SnapshotOption } from './types'
 
 vi.mock('../../lib/supabase', () => ({ supabase: { from: vi.fn() } }))
@@ -63,6 +64,10 @@ function respond(q: Query): Result {
   }
   if (q.table === 'mt_companies') {
     if (has(q, 'insert')) return { data: { id: 'C-new', ...(callsOf(q, 'insert')[0][0] as object) }, error: null }
+    if (has(q, 'update')) {
+      const [[, id]] = callsOf(q, 'eq') as [string, string][]
+      return { data: { ...companies.find((c) => c.id === id), ...(callsOf(q, 'update')[0][0] as object) }, error: null }
+    }
     return { data: companiesError ? null : companies, error: companiesError }
   }
   if (q.table === 'mt_snapshot_options') {
@@ -99,7 +104,7 @@ const writes = (m: 'insert' | 'update' | 'delete') => queries.filter((q) => has(
 
 describe('editing api', () => {
   it('updateListing updates one mt_listings row by id', async () => {
-    const patch = { name: 'N', source: 'manual' as const, url: null, competitor_name: null, active: false }
+    const patch = { name: 'N', is_own: false, source: 'manual' as const, url: null, competitor_name: null, active: false }
     await updateListing('L1', patch)
     expect(queries[0].table).toBe('mt_listings')
     expect(callsOf(queries[0], 'update')).toEqual([[patch]])
@@ -200,8 +205,9 @@ describe('Edit listing', () => {
     await waitFor(() => expect(writes('update')).toHaveLength(1))
     const [q] = writes('update')
     expect(q.table).toBe('mt_listings')
+    // The Company box started with the old competitor name "Rival Co", which matches company C1.
     expect(callsOf(q, 'update')[0][0]).toEqual({
-      name: 'New Name', source: 'tripadvisor', url: null, competitor_name: 'Other Co', active: false, company_id: null,
+      name: 'New Name', is_own: false, source: 'tripadvisor', url: null, competitor_name: 'Other Co', active: false, company_id: 'C1',
     })
     expect(callsOf(q, 'eq')).toEqual([['id', 'L1']])
 
@@ -210,11 +216,35 @@ describe('Edit listing', () => {
     expect(screen.queryByRole('form', { name: 'Edit listing' })).toBeNull()
   })
 
-  it('does not change whether the listing is own or competitor', async () => {
+  it('has a Company box and a "This is ours (OWN)" tick box', async () => {
     const form = await openEdit()
+    expect(within(form).getByLabelText('Company')).toBeTruthy()
+    expect((within(form).getByLabelText('This is ours (OWN)') as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('pre-fills the Company box with the old competitor name when there is no company yet, and one Save links it', async () => {
+    // Saved as "City Wonders Ltd." with a trailing dot; the company is "City Wonders Ltd".
+    listing.competitor_name = 'City Wonders Ltd.'
+    companies = [...companies, { id: 'CW', name: 'City Wonders Ltd', is_own: false }]
+    const form = await openEdit()
+    expect((within(form).getByLabelText('Company') as HTMLInputElement).value).toBe('City Wonders Ltd.')
     fireEvent.click(within(form).getByRole('button', { name: 'Save listing' }))
     await waitFor(() => expect(writes('update')).toHaveLength(1))
-    expect(callsOf(writes('update')[0], 'update')[0][0]).not.toHaveProperty('is_own')
+    expect(callsOf(writes('update')[0], 'update')[0][0]).toMatchObject({ company_id: 'CW' })
+    expect(writes('insert')).toHaveLength(0)
+    expect(await screen.findByRole('link', { name: 'City Wonders Ltd' })).toBeTruthy()
+  })
+
+  it('ticking OWN for an existing competitor company marks the company OWN and the listing own', async () => {
+    listing.company_id = 'C1'
+    const form = await openEdit()
+    fireEvent.click(within(form).getByLabelText('This is ours (OWN)'))
+    fireEvent.click(within(form).getByRole('button', { name: 'Save listing' }))
+    await waitFor(() => expect(writes('update').filter((q) => q.table === 'mt_listings')).toHaveLength(1))
+    const companyUpdate = writes('update').find((q) => q.table === 'mt_companies')!
+    expect(callsOf(companyUpdate, 'update')[0][0]).toEqual({ is_own: true })
+    expect(callsOf(companyUpdate, 'eq')).toEqual([['id', 'C1']])
+    expect(callsOf(writes('update').find((q) => q.table === 'mt_listings')!, 'update')[0][0]).toMatchObject({ is_own: true, company_id: 'C1' })
   })
 
   it.each([
@@ -531,5 +561,55 @@ describe('SnapshotList options', () => {
     fireEvent.click(within(article).getByRole('button', { name: 'Edit' }))
     expect((within(article).getByLabelText(/^options/i) as HTMLTextAreaElement).value)
       .toBe('Shared | Group transfer | 150\nPrivate')
+  })
+})
+
+// ---------- linking an old listing, end to end ----------
+
+describe('linking an old listing to its company', () => {
+  it('after one Save, the listing has company_id and the Companies page shows it under City Wonders Ltd', async () => {
+    // A tiny database: one old listing with only competitor_name, and the company already created.
+    const db = {
+      listings: [{
+        id: 'ND', name: 'Notre-Dame Tour with Access to the Cathedral', is_own: false, source: 'viator',
+        url: null, competitor_name: 'City Wonders Ltd.', active: true, company_id: null as string | null,
+      }],
+      companies: [{ id: 'CW', name: 'City Wonders Ltd', is_own: false }],
+    }
+    const fake = createFakeSupabase((q) => {
+      if (q.table === 'mt_listings') {
+        if (has(q, 'update')) {
+          Object.assign(db.listings[0], callsOf(q, 'update')[0][0] as object)
+          return { data: { ...db.listings[0] }, error: null }
+        }
+        if (has(q, 'single')) return { data: { ...db.listings[0] }, error: null }
+        return { data: db.listings.map((l) => ({ ...l })), error: null }
+      }
+      if (q.table === 'mt_companies') return { data: db.companies, error: null }
+      return { data: [], error: null }
+    })
+    vi.mocked(supabase.from).mockImplementation(fake.client.from as never)
+
+    const { unmount } = render(<ListingDetailPage id="ND" />)
+    expect(await screen.findByText('Unassigned')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit listing' }))
+    const form = await screen.findByRole('form', { name: 'Edit listing' })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save listing' }))
+    expect(await screen.findByRole('link', { name: 'City Wonders Ltd' })).toBeTruthy()
+    expect(db.listings[0].company_id).toBe('CW')
+    unmount()
+
+    // "Reload": a fresh page reads the saved row back.
+    render(<ListingDetailPage id="ND" />)
+    expect(await screen.findByRole('link', { name: 'City Wonders Ltd' })).toBeTruthy()
+    expect(screen.queryByText('City Wonders Ltd.')).toBeNull()
+    cleanup()
+
+    render(<CompaniesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'List' }))
+    const table = screen.getByRole('table', { name: 'Companies' })
+    const row = within(table).getByRole('link', { name: 'City Wonders Ltd' }).closest('tr')!
+    expect(within(row).getByText('1')).toBeTruthy()
+    expect(within(table).queryByRole('link', { name: 'Unassigned' })).toBeNull()
   })
 })

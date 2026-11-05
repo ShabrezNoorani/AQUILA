@@ -10,34 +10,36 @@ const tags: Tag[] = [
 ]
 
 describe('buildAskRequest: chosen tags to the request', () => {
-  it('sends places then types together in tag_ids, with the trimmed question', () => {
-    expect(buildAskRequest({ question: '  Who is cheapest? ', placeIds: ['P2', 'P1'], typeIds: ['T1'] }, tags)).toEqual({
+  const mixed: Tag[] = [...tags, { id: 'F1', kind: 'food', name: 'Bakery' }]
+
+  it('sends tags of any kinds, in the order chosen, with the trimmed question', () => {
+    expect(buildAskRequest({ question: '  Who is cheapest? ', tagIds: ['T1', 'F1', 'P1'] }, mixed)).toEqual({
       ok: true,
-      request: { question: 'Who is cheapest?', tag_ids: ['P2', 'P1', 'T1'] },
+      request: { question: 'Who is cheapest?', tag_ids: ['T1', 'F1', 'P1'] },
     })
   })
 
-  it('allows no type tags', () => {
-    const r = buildAskRequest({ question: 'Q', placeIds: ['P1'], typeIds: [] }, tags)
-    expect(r).toEqual({ ok: true, request: { question: 'Q', tag_ids: ['P1'] } })
+  it('allows no tags at all (every listing is used)', () => {
+    expect(buildAskRequest({ question: 'Which competitor tour has the best reviews?', tagIds: [] }, tags)).toEqual({
+      ok: true, request: { question: 'Which competitor tour has the best reviews?', tag_ids: [] },
+    })
   })
 
-  it('needs at least one place tag and a question', () => {
-    const r = buildAskRequest({ question: '  ', placeIds: [], typeIds: ['T1'] }, tags)
-    expect(r).toEqual({ ok: false, errors: { places: 'Choose at least one place tag.', question: 'Type a question.' } })
+  it('allows only type tags, with no place', () => {
+    expect(buildAskRequest({ question: 'Q', tagIds: ['T1'] }, tags)).toEqual({ ok: true, request: { question: 'Q', tag_ids: ['T1'] } })
   })
 
-  it('drops duplicates, unknown ids, and ids of the wrong kind', () => {
-    const r = buildAskRequest({ question: 'Q', placeIds: ['P1', 'P1', 'T1', 'gone'], typeIds: ['P2', 'T1'] }, tags)
+  it('needs a question', () => {
+    expect(buildAskRequest({ question: '  ', tagIds: ['P1'] }, tags)).toEqual({ ok: false, errors: { question: 'Type a question.' } })
+  })
+
+  it('drops duplicates and unknown ids', () => {
+    const r = buildAskRequest({ question: 'Q', tagIds: ['P1', 'P1', 'gone', 'T1'] }, tags)
     expect(r).toEqual({ ok: true, request: { question: 'Q', tag_ids: ['P1', 'T1'] } })
   })
 
-  it('does not count a type tag as a place', () => {
-    expect(buildAskRequest({ question: 'Q', placeIds: ['T1'], typeIds: [] }, tags).ok).toBe(false)
-  })
-
   it('rejects an over-long question', () => {
-    const r = buildAskRequest({ question: 'x'.repeat(2001), placeIds: ['P1'], typeIds: [] }, tags)
+    const r = buildAskRequest({ question: 'x'.repeat(2001), tagIds: ['P1'] }, tags)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.errors.question).toMatch(/under 2000/)
   })
@@ -61,9 +63,17 @@ describe('parseAskResponse', () => {
 })
 
 describe('past answer helpers', () => {
-  it('splits stored tag_ids back into place and type names, counting deleted tags', () => {
-    expect(describeTags(['P1', 'T1', 'gone'], tags)).toEqual({ places: ['Dubai'], types: ['Safari'], missing: 1 })
-    expect(describeTags(null, tags)).toEqual({ places: [], types: [], missing: 0 })
+  it('groups stored tag_ids back by kind, counting deleted tags', () => {
+    const mixed: Tag[] = [...tags, { id: 'F1', kind: 'food', name: 'Bakery' }]
+    expect(describeTags(['P1', 'T1', 'F1', 'P2', 'gone'], mixed)).toEqual({
+      groups: [
+        { kind: 'Food', names: ['Bakery'] },
+        { kind: 'Place', names: ['Abu Dhabi', 'Dubai'] },
+        { kind: 'Type', names: ['Safari'] },
+      ],
+      missing: 1,
+    })
+    expect(describeTags(null, tags)).toEqual({ groups: [], missing: 0 })
   })
 
   it('names used listings and marks deleted ones', () => {
