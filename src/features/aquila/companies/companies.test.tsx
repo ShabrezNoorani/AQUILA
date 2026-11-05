@@ -10,7 +10,7 @@ import {
   listingRowToForm,
   normaliseCompanyName,
 } from '../mapping'
-import type { Company, Listing } from '../types'
+import type { Company, Listing, ListingTag, Tag } from '../types'
 import CompaniesPage from './CompaniesPage'
 
 vi.mock('../../../lib/supabase', () => ({ supabase: { from: vi.fn() } }))
@@ -20,6 +20,8 @@ const has = (q: Query, m: string) => callsOf(q, m).length > 0
 let queries: Query[]
 let companies: Company[]
 let listings: Partial<Listing>[]
+let tags: Tag[]
+let links: ListingTag[]
 
 function respond(q: Query): Result {
   if (q.table === 'mt_companies') {
@@ -30,6 +32,8 @@ function respond(q: Query): Result {
     }
     return { data: companies, error: null }
   }
+  if (q.table === 'mt_tags') return { data: tags, error: null }
+  if (q.table === 'mt_listing_tags') return { data: links, error: null }
   if (q.table === 'mt_listings') {
     if (has(q, 'update')) return { data: { id: 'L1', ...(callsOf(q, 'update')[0][0] as object) }, error: null }
     return { data: listings, error: null }
@@ -49,6 +53,23 @@ beforeEach(() => {
     { id: 'L4', name: 'Loose One', company_id: null, active: true },
     { id: 'L5', name: 'Old Row', active: true },
   ]
+  // Walking+Paris is on Our Walk (C2) and Loose One (unassigned) only. Rival Co has Boat+Paris
+  // on one listing and Walking+Lyon on another, so it never has both Walking and Paris together.
+  tags = [
+    { id: 'T1', name: 'Walking', kind: 'type' },
+    { id: 'T2', name: 'Boat', kind: 'type' },
+    { id: 'T3', name: 'Unused', kind: 'type' },
+    { id: 'P1', name: 'Paris', kind: 'place' },
+    { id: 'P2', name: 'Lyon', kind: 'place' },
+  ]
+  links = [
+    { listing_id: 'L1', tag_id: 'T2' }, { listing_id: 'L1', tag_id: 'P1' },
+    { listing_id: 'L2', tag_id: 'T1' }, { listing_id: 'L2', tag_id: 'P2' },
+    { listing_id: 'L3', tag_id: 'T1' }, { listing_id: 'L3', tag_id: 'P1' },
+    { listing_id: 'L4', tag_id: 'T1' }, { listing_id: 'L4', tag_id: 'P1' },
+  ]
+  localStorage.clear()
+  sessionStorage.clear()
   const fake = createFakeSupabase((q) => respond(q))
   queries = fake.queries
   vi.mocked(supabase.from).mockImplementation(fake.client.from as never)
@@ -157,6 +178,7 @@ describe('company api', () => {
 describe('CompaniesPage', () => {
   it('shows each company with its OWN marker and listing count, plus an Unassigned row', async () => {
     render(<CompaniesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'List' }))
     const table = await screen.findByRole('table', { name: 'Companies' })
     const row = (name: string) => within(table).getByText(name).closest('tr')!
     expect(within(row('Rival Co')).getByText('Competitor')).toBeTruthy()
@@ -217,5 +239,165 @@ describe('CompaniesPage', () => {
     vi.mocked(supabase.from).mockImplementation(fake.client.from as never)
     render(<CompaniesPage />)
     expect(await screen.findByText(/could not load companies/i)).toBeTruthy()
+  })
+})
+
+// ---------- views, sorting and the tag filter ----------
+
+describe('CompaniesPage views, sorting and tag filter', () => {
+  const view = (name: 'Library' | 'List') => screen.getByRole('button', { name })
+  const tag = (name: string) => within(screen.getByRole('group', { name: 'Filter by tag' })).getByRole('button', { name })
+  /** Company names in the order shown, in whichever view is open. */
+  const shownNames = () => {
+    const box = screen.queryByRole('list', { name: 'Companies' }) ?? screen.getByRole('table', { name: 'Companies' })
+    return within(box).getAllByRole('link').map((a) => a.textContent)
+  }
+
+  it('the page and sidebar are called Companies, and Library is the default view', async () => {
+    render(<CompaniesPage />)
+    expect(await screen.findByRole('heading', { name: 'Companies' })).toBeTruthy()
+    expect(view('Library').getAttribute('aria-pressed')).toBe('true')
+    expect(view('List').getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('list', { name: 'Companies' })).toBeTruthy()
+    expect(screen.queryByRole('table')).toBeNull()
+  })
+
+  it('a Library card shows the name, OWN badge, listing count and the tags its listings use', async () => {
+    render(<CompaniesPage />)
+    const cards = within(await screen.findByRole('list', { name: 'Companies' })).getAllByRole('listitem')
+    const card = (name: string) => cards.find((c) => within(c).queryByRole('link', { name }))!
+    const ours = card('Scenic Zest Tours')
+    expect(within(ours).getByText('OWN')).toBeTruthy()
+    expect(within(ours).getByText('1 listing')).toBeTruthy()
+    expect([...ours.querySelectorAll('[data-kind]')].map((b) => b.textContent)).toEqual(['Walking', 'Paris'])
+    const rival = card('Rival Co')
+    expect(within(rival).queryByText('OWN')).toBeNull()
+    expect(within(rival).getByText('2 listings')).toBeTruthy()
+    expect([...rival.querySelectorAll('[data-kind]')].map((b) => b.textContent)).toEqual(['Boat', 'Walking', 'Lyon', 'Paris'])
+  })
+
+  it('switches between Library and List, and remembers the choice', async () => {
+    const { unmount } = render(<CompaniesPage />)
+    await screen.findByRole('list', { name: 'Companies' })
+    fireEvent.click(view('List'))
+    expect(screen.getByRole('table', { name: 'Companies' })).toBeTruthy()
+    expect(screen.queryByRole('list', { name: 'Companies' })).toBeNull()
+    expect(localStorage.getItem('aquila.companies.view')).toBe('list')
+    unmount()
+    render(<CompaniesPage />)
+    expect(await screen.findByRole('table', { name: 'Companies' })).toBeTruthy()
+    fireEvent.click(view('Library'))
+    expect(screen.getByRole('list', { name: 'Companies' })).toBeTruthy()
+  })
+
+  it('sorts A to Z by default and Z to A on request, ignoring capitals, with Unassigned last', async () => {
+    companies = [...companies, { id: 'C3', name: 'apex travel', is_own: false }]
+    render(<CompaniesPage />)
+    await screen.findByRole('list', { name: 'Companies' })
+    const sort = screen.getByLabelText('Sort') as HTMLSelectElement
+    expect(sort.value).toBe('az')
+    expect([...sort.options].map((o) => o.textContent)).toEqual(['A to Z', 'Z to A'])
+    expect(shownNames()).toEqual(['apex travel', 'Rival Co', 'Scenic Zest Tours', 'Unassigned'])
+    fireEvent.change(sort, { target: { value: 'za' } })
+    expect(shownNames()).toEqual(['Scenic Zest Tours', 'Rival Co', 'apex travel', 'Unassigned'])
+    expect(localStorage.getItem('aquila.companies.sort')).toBe('za')
+    fireEvent.click(view('List'))
+    expect(shownNames()).toEqual(['Scenic Zest Tours', 'Rival Co', 'apex travel', 'Unassigned'])
+  })
+
+  it('still works when storage is blocked', async () => {
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked') })
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked') })
+    try {
+      render(<CompaniesPage />)
+      await screen.findByRole('list', { name: 'Companies' })
+      fireEvent.click(view('List'))
+      expect(screen.getByRole('table', { name: 'Companies' })).toBeTruthy()
+      fireEvent.click(tag('Walking'))
+      expect(tag('Walking').getAttribute('aria-pressed')).toBe('true')
+    } finally {
+      get.mockRestore()
+      set.mockRestore()
+    }
+  })
+
+  it('offers every tag used by a listing, types and places, and no unused tag', async () => {
+    render(<CompaniesPage />)
+    const bar = await screen.findByRole('group', { name: 'Filter by tag' })
+    expect(within(bar).getAllByRole('button').map((b) => b.textContent)).toEqual(['Boat', 'Walking', 'Lyon', 'Paris'])
+    expect(within(bar).queryByRole('button', { name: 'Unused' })).toBeNull()
+    expect(within(bar).queryByRole('button', { name: 'Clear' })).toBeNull()
+  })
+
+  it('one selected tag shows only companies with a listing carrying it', async () => {
+    render(<CompaniesPage />)
+    await screen.findByRole('group', { name: 'Filter by tag' })
+    fireEvent.click(tag('Boat'))
+    expect(tag('Boat').getAttribute('aria-pressed')).toBe('true')
+    expect(shownNames()).toEqual(['Rival Co'])
+    expect(screen.getByText('1 of 2 listings match')).toBeTruthy()
+  })
+
+  it('two selected tags must all be on the same listing', async () => {
+    render(<CompaniesPage />)
+    await screen.findByRole('group', { name: 'Filter by tag' })
+    fireEvent.click(tag('Walking'))
+    expect(shownNames()).toEqual(['Rival Co', 'Scenic Zest Tours', 'Unassigned'])
+    fireEvent.click(tag('Paris'))
+    // Rival Co has Walking and Paris, but never on the same listing.
+    expect(shownNames()).toEqual(['Scenic Zest Tours', 'Unassigned'])
+    fireEvent.click(view('List'))
+    expect(shownNames()).toEqual(['Scenic Zest Tours', 'Unassigned'])
+  })
+
+  it('says so when no company matches every selected tag', async () => {
+    render(<CompaniesPage />)
+    await screen.findByRole('group', { name: 'Filter by tag' })
+    fireEvent.click(tag('Boat'))
+    fireEvent.click(tag('Lyon'))
+    expect(screen.getByText(/no company has a listing with all the selected tags/i)).toBeTruthy()
+  })
+
+  it('clicking a selected tag again deselects it, and Clear removes them all', async () => {
+    render(<CompaniesPage />)
+    await screen.findByRole('group', { name: 'Filter by tag' })
+    fireEvent.click(tag('Boat'))
+    fireEvent.click(tag('Boat'))
+    expect(tag('Boat').getAttribute('aria-pressed')).toBe('false')
+    expect(shownNames()).toEqual(['Rival Co', 'Scenic Zest Tours', 'Unassigned'])
+    fireEvent.click(tag('Walking'))
+    fireEvent.click(tag('Paris'))
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(shownNames()).toEqual(['Rival Co', 'Scenic Zest Tours', 'Unassigned'])
+    expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull()
+  })
+
+  it('keeps the Unassigned row in the List view, linking to its listings', async () => {
+    render(<CompaniesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'List' }))
+    const link = within(screen.getByRole('table', { name: 'Companies' })).getByRole('link', { name: 'Unassigned' })
+    expect(link.getAttribute('href')).toBe('#/companies/unassigned')
+    expect(within(link.closest('tr')!).getByText('2')).toBeTruthy()
+  })
+
+  it("opening a company with tags selected shows only its listings that carry them all", async () => {
+    const { unmount } = render(<CompaniesPage />)
+    await screen.findByRole('group', { name: 'Filter by tag' })
+    fireEvent.click(tag('Boat'))
+    unmount()
+    render(<CompaniesPage companyId="C1" />)
+    const table = await screen.findByRole('table', { name: 'Listings for Rival Co' })
+    expect(within(table).getAllByRole('link').map((a) => a.textContent)).toEqual(['Rival Safari'])
+    expect(screen.getByText('1 of 2 listings match the selected tags')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(within(screen.getByRole('table')).getAllByRole('link').map((a) => a.textContent)).toEqual(['Rival Safari', 'Rival Cruise'])
+  })
+
+  it('filters the Unassigned listings by the selected tags too', async () => {
+    sessionStorage.setItem('aquila.companies.tags', JSON.stringify(['T2']))
+    render(<CompaniesPage companyId="unassigned" />)
+    expect(await screen.findByText(/no listings here have all the selected tags/i)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(within(screen.getByRole('table')).getAllByRole('link').map((a) => a.textContent)).toEqual(['Loose One', 'Old Row'])
   })
 })

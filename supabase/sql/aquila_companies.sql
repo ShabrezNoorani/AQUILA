@@ -25,3 +25,6 @@ CREATE POLICY mt_companies_owner_only ON mt_companies
   WITH CHECK (auth.uid() = '34baa0f9-5f19-47a9-8129-60e6da9853b3'::uuid);
 
 ALTER TABLE mt_listings ADD COLUMN IF NOT EXISTS company_id uuid references mt_companies(id) on delete set null;
+
+-- Company names are unique, ignoring capitals and outer spaces.
+CREATE UNIQUE INDEX IF NOT EXISTS mt_companies_name_key ON mt_companies (lower(btrim(name)));

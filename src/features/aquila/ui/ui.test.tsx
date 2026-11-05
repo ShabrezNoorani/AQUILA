@@ -28,16 +28,16 @@ describe('AppShell', () => {
   it('lists Help after Ask AI, linking to #/help', () => {
     render(<AppShell active="listings"><p /></AppShell>)
     const nav = screen.getByRole('navigation', { name: 'Main' })
-    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Listings', 'Competitors', 'Tags', 'Ask AI', 'Help'])
+    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Listings', 'Companies', 'Tags', 'Ask AI', 'Help'])
     const help = within(nav).getByRole('link', { name: 'Help' })
     expect(help.getAttribute('href')).toBe('#/help')
     expect(help.className).toBe(within(nav).getByRole('link', { name: 'Tags' }).className)
   })
 
-  it('links Competitors to #/companies and marks it current the same way as Ask AI', () => {
+  it('links Companies to #/companies and marks it current the same way as Ask AI', () => {
     render(<AppShell active="companies"><p /></AppShell>)
     const nav = screen.getByRole('navigation', { name: 'Main' })
-    const item = within(nav).getByRole('link', { name: 'Competitors' })
+    const item = within(nav).getByRole('link', { name: 'Companies' })
     expect(item.getAttribute('href')).toBe('#/companies')
     expect(item.getAttribute('aria-current')).toBe('page')
     expect(item.className).toContain('text-accent')
