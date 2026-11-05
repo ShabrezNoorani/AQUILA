@@ -19,6 +19,8 @@ let deleteResult: Result
 let optionRows: SnapshotOption[]
 let optionsDeleteResult: Result
 let optionsInsertResult: Result
+let companies: Record<string, unknown>[]
+let companiesError: { message: string } | null
 
 const completeSnapshot: Snapshot = {
   id: 's1',
@@ -59,6 +61,10 @@ function respond(q: Query): Result {
     if (has(q, 'update')) return { data: { ...snapshots[0], ...(callsOf(q, 'update')[0][0] as object) }, error: null }
     return { data: snapshots, error: null }
   }
+  if (q.table === 'mt_companies') {
+    if (has(q, 'insert')) return { data: { id: 'C-new', ...(callsOf(q, 'insert')[0][0] as object) }, error: null }
+    return { data: companiesError ? null : companies, error: companiesError }
+  }
   if (q.table === 'mt_snapshot_options') {
     if (has(q, 'delete')) return optionsDeleteResult
     if (has(q, 'insert')) return optionsInsertResult
@@ -79,6 +85,8 @@ beforeEach(() => {
   optionRows = [...s1Options]
   optionsDeleteResult = { data: null, error: null }
   optionsInsertResult = { data: null, error: null }
+  companies = [{ id: 'C1', name: 'Rival Co', is_own: false }, { id: 'C2', name: 'Scenic Zest Tours', is_own: true }]
+  companiesError = null
   const fake = createFakeSupabase((q) => respond(q))
   queries = fake.queries
   vi.mocked(supabase.from).mockImplementation(fake.client.from as never)
@@ -168,7 +176,7 @@ describe('Edit listing', () => {
   async function openEdit() {
     render(<ListingDetailPage id="L1" />)
     fireEvent.click(await screen.findByRole('button', { name: 'Edit listing' }))
-    return screen.getByRole('form', { name: 'Edit listing' })
+    return screen.findByRole('form', { name: 'Edit listing' })
   }
 
   it('is pre-filled with the current values', async () => {
@@ -193,7 +201,7 @@ describe('Edit listing', () => {
     const [q] = writes('update')
     expect(q.table).toBe('mt_listings')
     expect(callsOf(q, 'update')[0][0]).toEqual({
-      name: 'New Name', source: 'tripadvisor', url: null, competitor_name: 'Other Co', active: false,
+      name: 'New Name', source: 'tripadvisor', url: null, competitor_name: 'Other Co', active: false, company_id: null,
     })
     expect(callsOf(q, 'eq')).toEqual([['id', 'L1']])
 
@@ -220,6 +228,49 @@ describe('Edit listing', () => {
     fireEvent.change(input, { target: { value } })
     fireEvent.click(within(form).getByRole('button', { name: 'Save listing' }))
     expect(await within(form).findByText(message)).toBeTruthy()
+    expect(writes('update')).toHaveLength(0)
+  })
+
+  it('shows the current company and saves a change to another existing one, matched ignoring case and spaces', async () => {
+    listing.company_id = 'C1'
+    const form = await openEdit()
+    const box = within(form).getByLabelText('Company') as HTMLInputElement
+    expect(box.value).toBe('Rival Co')
+    fireEvent.change(box, { target: { value: '  scenic   ZEST tours ' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save listing' }))
+    await waitFor(() => expect(writes('update')).toHaveLength(1))
+    expect(callsOf(writes('update')[0], 'update')[0][0]).toMatchObject({ company_id: 'C2' })
+    expect(writes('insert')).toHaveLength(0)
+    expect(await screen.findByRole('link', { name: 'Scenic Zest Tours (OWN)' })).toBeTruthy()
+  })
+
+  it('creates a company that does not exist yet, as a competitor like the listing', async () => {
+    const form = await openEdit()
+    fireEvent.change(within(form).getByLabelText('Company'), { target: { value: 'Brand New Tours' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save listing' }))
+    await waitFor(() => expect(writes('update')).toHaveLength(1))
+    const [ins] = writes('insert')
+    expect(ins.table).toBe('mt_companies')
+    expect(callsOf(ins, 'insert')[0][0]).toEqual({ name: 'Brand New Tours', is_own: false })
+    expect(callsOf(writes('update')[0], 'update')[0][0]).toMatchObject({ company_id: 'C-new' })
+  })
+
+  it('an empty company box leaves the listing unassigned', async () => {
+    listing.company_id = 'C1'
+    const form = await openEdit()
+    fireEvent.change(within(form).getByLabelText('Company'), { target: { value: '  ' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save listing' }))
+    await waitFor(() => expect(writes('update')).toHaveLength(1))
+    expect(callsOf(writes('update')[0], 'update')[0][0]).toMatchObject({ company_id: null })
+  })
+
+  it('does not offer the edit form when companies cannot be loaded, so the company is never wiped', async () => {
+    listing.company_id = 'C1'
+    companiesError = { message: 'companies down' }
+    render(<ListingDetailPage id="L1" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit listing' }))
+    expect(await screen.findByText(/could not load companies.*companies down/i)).toBeTruthy()
+    expect(screen.queryByRole('form', { name: 'Edit listing' })).toBeNull()
     expect(writes('update')).toHaveLength(0)
   })
 

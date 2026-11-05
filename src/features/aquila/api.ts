@@ -1,9 +1,11 @@
 // The only data access layer for AQUILA.
 // It reads and writes these tables: mt_listings, mt_snapshots, mt_reviews,
-// mt_tags, mt_listing_tags and mt_snapshot_options.
+// mt_tags, mt_listing_tags, mt_snapshot_options and mt_companies.
 
 import { supabase } from '../../lib/supabase'
 import type {
+  Company,
+  CompanyWithCount,
   Listing,
   ListingInsert,
   ListingUpdate,
@@ -20,6 +22,7 @@ import type {
   TagKind,
 } from './types'
 import { findTagByName, isTagKind, tagFormToRow } from './tags/tagMapping'
+import { companyRenameCheck, countListingsByCompany, findCompanyByName, normaliseCompanyName } from './mapping'
 
 const LISTINGS = 'mt_listings'
 const SNAPSHOTS = 'mt_snapshots'
@@ -27,6 +30,7 @@ const REVIEWS = 'mt_reviews'
 const TAGS = 'mt_tags'
 const LISTING_TAGS = 'mt_listing_tags'
 const SNAPSHOT_OPTIONS = 'mt_snapshot_options'
+const COMPANIES = 'mt_companies'
 
 /** Deletes exactly one row by id, and fails loudly if nothing was removed. */
 async function deleteOne(table: string, id: string, what: string): Promise<void> {
@@ -225,6 +229,53 @@ export async function createListingWithTags(row: ListingInsert, tagIds: string[]
     throw new Error(`Could not save the listing's tags, so the listing was not created: ${reason}`)
   }
   return listing
+}
+
+// ---------- companies ----------
+
+/** All companies, sorted by name. */
+export async function fetchCompanies(): Promise<Company[]> {
+  return unwrap<Company[] | null>(
+    await supabase.from(COMPANIES).select('*').order('name', { ascending: true }),
+  ) ?? []
+}
+
+/** All companies, sorted by name, each with how many listings belong to it. */
+export async function listCompanies(): Promise<CompanyWithCount[]> {
+  const [companies, links] = await Promise.all([
+    fetchCompanies(),
+    supabase.from(LISTINGS).select('company_id').then((r) => unwrap<{ company_id: string | null }[] | null>(r) ?? []),
+  ])
+  const counts = countListingsByCompany(links)
+  return companies.map((c) => ({ ...c, listing_count: counts.get(c.id) ?? 0 }))
+}
+
+/**
+ * Finds or creates a company by name. The name is trimmed and single-spaced. If a company with
+ * the same name already exists (ignoring capitalisation), it is returned and nothing is written;
+ * `isOwn` is only used for a new company.
+ */
+export async function createCompany(name: string, isOwn = false): Promise<{ company: Company; existed: boolean }> {
+  const clean = normaliseCompanyName(name)
+  if (!clean) throw new Error('Company name is required')
+  const existing = findCompanyByName(await fetchCompanies(), clean)
+  if (existing) return { company: existing, existed: true }
+  const company = unwrap<Company>(await supabase.from(COMPANIES).insert({ name: clean, is_own: isOwn }).select().single())
+  return { company, existed: false }
+}
+
+/** Renames a company. Fails when the name is empty or another company already has it. */
+export async function renameCompany(id: string, name: string): Promise<Company> {
+  const checked = companyRenameCheck(await fetchCompanies(), id, name)
+  if (!checked.ok) throw new Error(checked.error)
+  return unwrap<Company>(await supabase.from(COMPANIES).update({ name: checked.name }).eq('id', id).select().single())
+}
+
+/** Puts a listing under a company, or takes it out of any company when companyId is null. */
+export async function setListingCompany(listingId: string, companyId: string | null): Promise<Listing> {
+  return unwrap<Listing>(
+    await supabase.from(LISTINGS).update({ company_id: companyId }).eq('id', listingId).select().single(),
+  )
 }
 
 // ---------- snapshot options ----------

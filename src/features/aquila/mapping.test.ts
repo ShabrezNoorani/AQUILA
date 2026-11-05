@@ -16,6 +16,7 @@ describe('listingFormToRow', () => {
       source: 'viator',
       url: ' https://www.viator.com/tours/x ',
       competitor_name: ' Rival Tours ',
+      company: ' Rival Co ',
     }
     expect(listingFormToRow(form)).toEqual({
       ok: true,

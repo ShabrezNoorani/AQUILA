@@ -6,6 +6,8 @@
 //   #/tags             → manage type and place tags
 //   #/ask              → ask AI about listings with chosen tags
 //   #/help             → the AQUILA manual
+//   #/companies        → competitor companies
+//   #/companies/<id>   → one company's listings ('unassigned' for listings with no company)
 
 import { useEffect, useState } from 'react'
 
@@ -17,6 +19,8 @@ export type Route =
   | { name: 'tags' }
   | { name: 'ask' }
   | { name: 'help' }
+  | { name: 'companies' }
+  | { name: 'company'; id: string }
 
 export function parseHash(hash: string): Route {
   const path = hash.replace(/^#/, '').replace(/\/+$/, '')
@@ -24,6 +28,9 @@ export function parseHash(hash: string): Route {
   if (path === '/tags') return { name: 'tags' }
   if (path === '/ask') return { name: 'ask' }
   if (path === '/help') return { name: 'help' }
+  if (path === '/companies') return { name: 'companies' }
+  const company = path.match(/^\/companies\/([^/]+)$/)
+  if (company) return { name: 'company', id: decodeURIComponent(company[1]) }
   const imp = path.match(/^\/listings\/([^/]+)\/import$/)
   if (imp) return { name: 'import', id: decodeURIComponent(imp[1]) }
   const m = path.match(/^\/listings\/([^/]+)$/)
@@ -39,6 +46,10 @@ export const hrefFor = {
   tags: () => '#/tags',
   ask: () => '#/ask',
   help: () => '#/help',
+  companies: () => '#/companies',
+  company: (id: string) => `#/companies/${encodeURIComponent(id)}`,
+  /** The page listing every listing that has no company. */
+  unassigned: () => '#/companies/unassigned',
 }
 
 export function navigate(href: string) {

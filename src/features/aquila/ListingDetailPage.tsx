@@ -2,21 +2,24 @@ import { useEffect, useState, type FormEvent } from 'react'
 import {
   countReviews,
   countSnapshots,
+  createCompany,
   deleteListing,
+  fetchCompanies,
   fetchListing,
   fetchListingTagIds,
   fetchTags,
   setListingTags,
   updateListing,
 } from './api'
-import { listingFormToRow } from './mapping'
+import CompanyField from './companies/CompanyField'
+import { listingFormToRow, listingRowToForm, normaliseCompanyName } from './mapping'
 import ReviewsSection from './reviews/ReviewsSection'
 import { hrefFor, navigate } from './router'
 import SnapshotForm from './SnapshotForm'
 import SnapshotList from './SnapshotList'
-import { listingTagsError } from './tags/tagMapping'
+import { listingTagsError, withTag } from './tags/tagMapping'
 import TagPicker, { TagChips } from './tags/TagPicker'
-import { LISTING_SOURCES, SOURCE_LABELS, type Listing, type ListingSource, type Tag } from './types'
+import { LISTING_SOURCES, SOURCE_LABELS, type Company, type Listing, type ListingSource, type Tag } from './types'
 import {
   Badge,
   Button,
@@ -35,12 +38,16 @@ import {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
-type EditForm = { name: string; source: ListingSource; url: string; competitor_name: string; active: boolean }
+type EditForm = { name: string; source: ListingSource; url: string; competitor_name: string; active: boolean; company: string }
 
-/** Edits name, source, URL, competitor name and active. Own/competitor is not editable here. */
-function EditListingForm({ listing, onSaved, onCancel }: {
+/**
+ * Edits name, company, source, URL, competitor name and active. Own/competitor is not editable here.
+ * Only shown once the companies have loaded, so the company box never starts wrongly empty.
+ */
+function EditListingForm({ listing, companies, onSaved, onCancel }: {
   listing: Listing
-  onSaved: (updated: Listing) => void
+  companies: Company[]
+  onSaved: (updated: Listing, company: Company | null) => void
   onCancel: () => void
 }) {
   const [form, setForm] = useState<EditForm>({
@@ -49,6 +56,7 @@ function EditListingForm({ listing, onSaved, onCancel }: {
     url: listing.url ?? '',
     competitor_name: listing.competitor_name ?? '',
     active: listing.active,
+    company: listingRowToForm(listing, companies).company,
   })
   const [errors, setErrors] = useState<Partial<Record<keyof EditForm, string>>>({})
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -68,7 +76,15 @@ function EditListingForm({ listing, onSaved, onCancel }: {
     setBusy(true)
     try {
       const { name, source, url, competitor_name } = mapped.row
-      onSaved(await updateListing(listing.id, { name, source, url, competitor_name, active: form.active }))
+      // An empty company box leaves the listing unassigned. Otherwise the company with the same
+      // name (ignoring case and spaces) is reused, or created. Name and company save in one update.
+      const company = normaliseCompanyName(form.company)
+        ? (await createCompany(form.company, listing.is_own)).company
+        : null
+      const updated = await updateListing(listing.id, {
+        name, source, url, competitor_name, active: form.active, company_id: company?.id ?? null,
+      })
+      onSaved(updated, company)
     } catch (err) {
       setSaveError((err as Error).message)
       setBusy(false)
@@ -80,6 +96,9 @@ function EditListingForm({ listing, onSaved, onCancel }: {
       <form onSubmit={handleSubmit} noValidate aria-label="Edit listing" className="space-y-5">
         <TextField id="edit-listing-name" label="Name *" value={form.name}
           onChange={(v) => set('name', v)} error={errors.name} />
+        <CompanyField id="edit-listing-company" label="Company" value={form.company} companies={companies}
+          help="Pick an existing company or type a new one. Leave empty for unassigned."
+          onChange={(v) => set('company', v)} />
         <div className="grid gap-5 sm:grid-cols-2">
           <Field id="edit-listing-source" label="Source" error={errors.source}>
             <select id="edit-listing-source" value={form.source} className={inputClass}
@@ -109,7 +128,7 @@ function EditListingForm({ listing, onSaved, onCancel }: {
   )
 }
 
-/** Shows a listing's tags and edits them. Saving needs exactly one type tag and at least one place tag. */
+/** Shows a listing's tags and edits them. Saving needs at least one type tag and at least one place tag. */
 function ListingTagsSection({ listingId }: { listingId: string }) {
   const [tags, setTags] = useState<Tag[] | null>(null)
   const [saved, setSaved] = useState<string[]>([])
@@ -172,6 +191,7 @@ function ListingTagsSection({ listingId }: { listingId: string }) {
       {tags && editing && (
         <div className="space-y-4">
           <TagPicker idPrefix="edit-listing" tags={tags} selected={draft} error={ruleError} disabled={busy}
+            onTagCreated={(tag) => setTags((prev) => withTag(prev ?? [], tag))}
             onChange={(ids) => {
               setDraft(ids)
               setRuleError(null)
@@ -197,6 +217,8 @@ export default function ListingDetailPage({ id }: { id: string }) {
   const [editing, setEditing] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [companies, setCompanies] = useState<Company[] | null>(null)
+  const [companiesError, setCompaniesError] = useState<string | null>(null)
 
   async function askToDelete() {
     setDeleteError(null)
@@ -228,6 +250,10 @@ export default function ListingDetailPage({ id }: { id: string }) {
     fetchListing(id)
       .then((row) => live && setListing(row))
       .catch((e: Error) => live && setError(e.message))
+    // Loaded separately so the page still opens if companies can't be read.
+    fetchCompanies()
+      .then((rows) => live && setCompanies(rows))
+      .catch((e: Error) => live && setCompaniesError(e.message))
     return () => {
       live = false
     }
@@ -249,11 +275,18 @@ export default function ListingDetailPage({ id }: { id: string }) {
     )
   }
 
+  const company = companies?.find((c) => c.id === listing.company_id) ?? null
+
   return (
     <Page title={listing.name} back={{ href: hrefFor.listings(), label: '← All listings' }}
       meta={(
         <>
           <Badge tone={listing.is_own ? 'strong' : 'neutral'}>{listing.is_own ? 'Own' : 'Competitor'}</Badge>
+          {company && (
+            <a href={hrefFor.company(company.id)} className="font-medium text-ink-2 hover:text-accent">
+              {company.name}{company.is_own ? ' (OWN)' : ''}
+            </a>
+          )}
           <Badge tone={listing.active ? 'positive' : 'neutral'}>{listing.active ? 'Active' : 'Inactive'}</Badge>
           <span>{SOURCE_LABELS[listing.source] ?? listing.source}</span>
           {listing.competitor_name && <span>· {listing.competitor_name}</span>}
@@ -297,10 +330,20 @@ export default function ListingDetailPage({ id }: { id: string }) {
       )}
       {confirmCount === null && deleteError && <FormError>Could not delete: {deleteError}</FormError>}
 
-      {editing && (
-        <EditListingForm listing={listing} onCancel={() => setEditing(false)}
-          onSaved={(updated) => {
+      {editing && companiesError && (
+        <Card title="Edit listing">
+          <FormError>Could not load companies, so the listing can’t be edited yet: {companiesError}</FormError>
+          <div className="mt-4 flex justify-end"><Button onClick={() => setEditing(false)}>Cancel</Button></div>
+        </Card>
+      )}
+      {editing && !companiesError && !companies && (
+        <Card title="Edit listing"><p className="text-sm text-ink-3">Loading companies…</p></Card>
+      )}
+      {editing && companies && (
+        <EditListingForm listing={listing} companies={companies} onCancel={() => setEditing(false)}
+          onSaved={(updated, saved) => {
             setListing(updated)
+            if (saved) setCompanies((prev) => (prev?.some((c) => c.id === saved.id) ? prev : [...(prev ?? []), saved]))
             setEditing(false)
           }} />
       )}

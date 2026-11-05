@@ -74,26 +74,23 @@ describe('NewListingForm', () => {
   })
 
   it('inserts the mapped row and reports the new listing', async () => {
-    respond = (q) => {
-      if (q.table === 'mt_tags') {
-        return { data: [{ id: 'T1', name: 'Tour', kind: 'type' }, { id: 'P1', name: 'Dubai', kind: 'place' }], error: null }
-      }
-      return { data: { id: 'new-1' }, error: null }
-    }
+    respond = newListingRespond([])
     const onCreated = vi.fn()
     render(<NewListingForm onCreated={onCreated} />)
     fireEvent.click(await screen.findByLabelText('Tour'))
     fireEvent.click(screen.getByLabelText('Dubai'))
 
     fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'Rival Safari' } })
-    fireEvent.click(screen.getByLabelText(/competitor/i, { selector: 'input[type=radio]' }))
+    fireEvent.change(screen.getByLabelText(/^company/i), { target: { value: '  Rival   Co ' } })
     fireEvent.change(screen.getByLabelText(/source/i), { target: { value: 'tripadvisor' } })
     fireEvent.change(screen.getByLabelText(/url/i), { target: { value: 'https://example.com/t' } })
     fireEvent.change(screen.getByLabelText(/competitor name/i), { target: { value: 'Rival Co' } })
     fireEvent.click(screen.getByRole('button', { name: /create listing/i }))
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-1'))
-    const [q, links] = inserts()
+    const [company, q, links] = inserts()
+    expect(company.table).toBe('mt_companies')
+    expect(callsOf(company, 'insert')[0][0]).toEqual({ name: 'Rival Co', is_own: false })
     expect(q.table).toBe('mt_listings')
     expect(links.table).toBe('mt_listing_tags')
     expect(callsOf(q, 'insert')[0][0]).toEqual({
@@ -103,9 +100,69 @@ describe('NewListingForm', () => {
       url: 'https://example.com/t',
       competitor_name: 'Rival Co',
       active: true,
+      company_id: 'C-new',
     })
   })
+
+  it('requires a company and saves nothing without one', async () => {
+    respond = newListingRespond([])
+    render(<NewListingForm onCreated={() => {}} />)
+    fireEvent.click(await screen.findByLabelText('Tour'))
+    fireEvent.click(screen.getByLabelText('Dubai'))
+    fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'Rival Safari' } })
+    fireEvent.change(screen.getByLabelText(/^company/i), { target: { value: '   ' } })
+    fireEvent.click(screen.getByRole('button', { name: /create listing/i }))
+    expect(await screen.findByText('Company is required')).toBeTruthy()
+    expect(inserts()).toHaveLength(0)
+  })
+
+  it('reuses an existing company whatever its case and spacing, and suggests existing names', async () => {
+    respond = newListingRespond([{ id: 'C1', name: 'Rival Co', is_own: false }])
+    const onCreated = vi.fn()
+    const { container } = render(<NewListingForm onCreated={onCreated} />)
+    fireEvent.click(await screen.findByLabelText('Tour'))
+    fireEvent.click(screen.getByLabelText('Dubai'))
+    await waitFor(() => expect(container.querySelector('datalist option')?.getAttribute('value')).toBe('Rival Co'))
+    fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'Rival Safari' } })
+    fireEvent.change(screen.getByLabelText(/^company/i), { target: { value: '  rival  CO ' } })
+    fireEvent.click(screen.getByRole('button', { name: /create listing/i }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-1'))
+    expect(inserts().map((q) => q.table)).toEqual(['mt_listings', 'mt_listing_tags'])
+    expect(callsOf(inserts()[0], 'insert')[0][0]).toMatchObject({ company_id: 'C1' })
+  })
+
+  it('"This is ours (OWN)" sets is_own on the listing and on a new company', async () => {
+    respond = newListingRespond([])
+    const onCreated = vi.fn()
+    render(<NewListingForm onCreated={onCreated} />)
+    fireEvent.click(await screen.findByLabelText('Tour'))
+    fireEvent.click(screen.getByLabelText('Dubai'))
+    fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'Our Safari' } })
+    fireEvent.change(screen.getByLabelText(/^company/i), { target: { value: 'Scenic Zest Tours' } })
+    const own = screen.getByLabelText('This is ours (OWN)') as HTMLInputElement
+    expect(own.checked).toBe(false)
+    fireEvent.click(own)
+    fireEvent.click(screen.getByRole('button', { name: /create listing/i }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-1'))
+    const [company, listing] = inserts()
+    expect(callsOf(company, 'insert')[0][0]).toEqual({ name: 'Scenic Zest Tours', is_own: true })
+    expect(callsOf(listing, 'insert')[0][0]).toMatchObject({ is_own: true, company_id: 'C-new' })
+  })
 })
+
+/** Answers for the new listing form: two tags, the given companies, and ids for new rows. */
+function newListingRespond(companies: Record<string, unknown>[]) {
+  return (q: Query): Result => {
+    if (q.table === 'mt_tags') {
+      return { data: [{ id: 'T1', name: 'Tour', kind: 'type' }, { id: 'P1', name: 'Dubai', kind: 'place' }], error: null }
+    }
+    if (q.table === 'mt_companies' && callsOf(q, 'insert').length) {
+      return { data: { id: 'C-new', ...(callsOf(q, 'insert')[0][0] as object) }, error: null }
+    }
+    if (q.table === 'mt_companies') return { data: companies, error: null }
+    return { data: { id: 'new-1' }, error: null }
+  }
+}
 
 describe('SnapshotForm', () => {
   const set = (label: RegExp, value: string) =>
@@ -217,17 +274,13 @@ describe('source dropdowns', () => {
   ]
 
   it('the new listing form offers GetYourGuide and saves it as getyourguide', async () => {
-    respond = (q) => {
-      if (q.table === 'mt_tags') {
-        return { data: [{ id: 'T1', name: 'Tour', kind: 'type' }, { id: 'P1', name: 'Dubai', kind: 'place' }], error: null }
-      }
-      return { data: { id: 'new-1' }, error: null }
-    }
+    respond = newListingRespond([{ id: 'C1', name: 'GYG Co', is_own: false }])
     const onCreated = vi.fn()
     render(<NewListingForm onCreated={onCreated} />)
     expect(labels(screen.getByLabelText(/source/i))).toEqual(expected)
 
     fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'GYG Safari' } })
+    fireEvent.change(screen.getByLabelText(/^company/i), { target: { value: 'GYG Co' } })
     fireEvent.change(screen.getByLabelText(/source/i), { target: { value: 'getyourguide' } })
     fireEvent.click(await screen.findByLabelText('Tour'))
     fireEvent.click(screen.getByLabelText('Dubai'))

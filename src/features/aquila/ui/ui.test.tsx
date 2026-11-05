@@ -28,10 +28,20 @@ describe('AppShell', () => {
   it('lists Help after Ask AI, linking to #/help', () => {
     render(<AppShell active="listings"><p /></AppShell>)
     const nav = screen.getByRole('navigation', { name: 'Main' })
-    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Listings', 'Tags', 'Ask AI', 'Help'])
+    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Listings', 'Competitors', 'Tags', 'Ask AI', 'Help'])
     const help = within(nav).getByRole('link', { name: 'Help' })
     expect(help.getAttribute('href')).toBe('#/help')
     expect(help.className).toBe(within(nav).getByRole('link', { name: 'Tags' }).className)
+  })
+
+  it('links Competitors to #/companies and marks it current the same way as Ask AI', () => {
+    render(<AppShell active="companies"><p /></AppShell>)
+    const nav = screen.getByRole('navigation', { name: 'Main' })
+    const item = within(nav).getByRole('link', { name: 'Competitors' })
+    expect(item.getAttribute('href')).toBe('#/companies')
+    expect(item.getAttribute('aria-current')).toBe('page')
+    expect(item.className).toContain('text-accent')
+    expect(within(nav).getByRole('link', { name: 'Ask AI' }).getAttribute('aria-current')).toBeNull()
   })
 
   it('marks Help as the current page when active is help', () => {

@@ -19,12 +19,32 @@ export type ListingInsert = {
   url: string | null
   competitor_name: string | null
   active: boolean
+  /** The company this listing belongs to (mt_companies.id), or null when unassigned. */
+  company_id?: string | null
 }
 
 /** A row read back from mt_listings. */
 export type Listing = ListingInsert & {
   id: string
 }
+
+// ---------- companies ----------
+
+/** A row read back from mt_companies. */
+export type Company = {
+  id: string
+  name: string
+  /** True for our own company (OWN); false for a competitor. */
+  is_own: boolean
+  owner_id?: string | null
+  created_at?: string
+}
+
+/** Columns written when creating a row in mt_companies. id, owner_id and created_at are set by the database. */
+export type CompanyInsert = Pick<Company, 'name' | 'is_own'>
+
+/** A company with how many listings belong to it. */
+export type CompanyWithCount = Company & { listing_count: number }
 
 /** Columns written when creating a row in mt_snapshots. */
 export type SnapshotInsert = {
@@ -57,7 +77,7 @@ export type Snapshot = Partial<Omit<SnapshotInsert, 'method' | 'status'>> & {
 }
 
 /** Fields of mt_listings that the "Edit listing" form may change. */
-export type ListingUpdate = Pick<ListingInsert, 'name' | 'source' | 'url' | 'competitor_name' | 'active'>
+export type ListingUpdate = Pick<ListingInsert, 'name' | 'source' | 'url' | 'competitor_name' | 'active' | 'company_id'>
 
 /**
  * Fields of mt_snapshots that editing may change. listing_id, method, raw_html and raw_text are

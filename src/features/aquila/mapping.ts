@@ -7,7 +7,16 @@ import {
   parseRating,
   parseReviewCount,
 } from './parse'
-import { LISTING_SOURCES, type ListingInsert, type ListingSource, type Snapshot, type SnapshotInsert, type SnapshotOption } from './types'
+import {
+  LISTING_SOURCES,
+  type Company,
+  type Listing,
+  type ListingInsert,
+  type ListingSource,
+  type Snapshot,
+  type SnapshotInsert,
+  type SnapshotOption,
+} from './types'
 
 export type Mapped<Row, Field extends string> =
   | { ok: true; row: Row }
@@ -23,22 +32,33 @@ export type ListingForm = {
   source: ListingSource
   url: string
   competitor_name: string
+  /** The company's name, as typed. It becomes company_id when the listing is saved. */
+  company: string
 }
 
 export const emptyListingForm = (): ListingForm => ({
   name: '',
-  is_own: true,
+  is_own: false,
   source: 'manual',
   url: '',
   competitor_name: '',
+  company: '',
 })
 
-export function listingFormToRow(form: ListingForm): Mapped<ListingInsert, keyof ListingForm> {
+/**
+ * Checks the listing form. The row has no company_id: the company name is checked here
+ * (required when `requireCompany`), and the caller turns it into an id when saving.
+ */
+export function listingFormToRow(
+  form: ListingForm,
+  { requireCompany = false }: { requireCompany?: boolean } = {},
+): Mapped<ListingInsert, keyof ListingForm> {
   const errors: Partial<Record<keyof ListingForm, string>> = {}
   const name = form.name.trim()
   const url = form.url.trim()
 
   if (!name) errors.name = 'Name is required'
+  if (requireCompany && !normaliseCompanyName(form.company ?? '')) errors.company = 'Company is required'
   if (!LISTING_SOURCES.includes(form.source)) errors.source = 'Choose viator, tripadvisor or manual'
   if (url && !/^https?:\/\/\S+$/i.test(url)) errors.url = 'URL must start with http:// or https://'
 
@@ -54,6 +74,58 @@ export function listingFormToRow(form: ListingForm): Mapped<ListingInsert, keyof
       active: true,
     },
   }
+}
+
+/** A listing as form text. The company name comes from its company_id, or '' when unassigned. */
+export function listingRowToForm(listing: Listing, companies: Company[]): ListingForm {
+  return {
+    name: listing.name,
+    is_own: listing.is_own,
+    source: listing.source,
+    url: listing.url ?? '',
+    competitor_name: listing.competitor_name ?? '',
+    company: companies.find((c) => c.id === listing.company_id)?.name ?? '',
+  }
+}
+
+// ---------- companies ----------
+
+/** Trims a company name and collapses inner runs of spaces. */
+export function normaliseCompanyName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ')
+}
+
+/** Key used to compare company names: trimmed, single-spaced, ignoring capitalisation. */
+export const companyNameKey = (name: string) => normaliseCompanyName(name).toLocaleLowerCase()
+
+/** The company whose name matches, ignoring capitalisation and extra spaces. */
+export function findCompanyByName(companies: Company[], name: string): Company | undefined {
+  const key = companyNameKey(name)
+  return key ? companies.find((c) => companyNameKey(c.name) === key) : undefined
+}
+
+/**
+ * Checks a new name for a company. Returns the cleaned name, or an error when it is empty
+ * or another company already has it.
+ */
+export function companyRenameCheck(companies: Company[], id: string, name: string):
+  | { ok: true; name: string }
+  | { ok: false; error: string } {
+  const clean = normaliseCompanyName(name)
+  if (!clean) return { ok: false, error: 'Company name is required' }
+  const clash = findCompanyByName(companies, clean)
+  if (clash && clash.id !== id) return { ok: false, error: `A company named “${clash.name}” already exists` }
+  return { ok: true, name: clean }
+}
+
+/** Counts listings per company id. Listings without a company are counted under null. */
+export function countListingsByCompany(listings: Pick<Listing, 'company_id'>[]): Map<string | null, number> {
+  const out = new Map<string | null, number>()
+  for (const l of listings) {
+    const key = l.company_id ?? null
+    out.set(key, (out.get(key) ?? 0) + 1)
+  }
+  return out
 }
 
 // ---------- snapshots ----------

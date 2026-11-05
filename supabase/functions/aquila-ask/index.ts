@@ -4,7 +4,7 @@
 //  1. Only the AQUILA owner may call it (403 for anyone else).
 //  2. Reads listing data with the caller's own token, so row-level security applies.
 //     Only these tables are read: mt_listings, mt_listing_tags, mt_tags, mt_snapshots,
-//     mt_snapshot_options, mt_timing_rules, mt_reviews.
+//     mt_snapshot_options, mt_timing_rules, mt_reviews, mt_companies.
 //  3. Groups the data by the chosen place tags and asks Gemini.
 //  4. Saves one row to mt_suggestions and returns the answer with the listing and snapshot ids used.
 //
@@ -27,6 +27,7 @@ export const READ_TABLES = [
   'mt_snapshot_options',
   'mt_timing_rules',
   'mt_reviews',
+  'mt_companies',
 ] as const
 type ReadTable = (typeof READ_TABLES)[number]
 
@@ -47,7 +48,9 @@ const SNAPSHOT_COLUMNS = [
 export const SYSTEM_PROMPT = [
   'You answer questions about tour listings for the owner of a tour business.',
   'Use only the JSON data you are given. It is grouped by the place tags the owner chose.',
+  'Each listing has a "company": its name, and "own": true when it is the owner\'s own company (OWN). Every other company is a competitor; "company" is null when the listing has no company.',
   'Rules:',
+  '- When comparing, label the owner\'s listings as OWN and name each competitor company, so it is clear which is "us" and which is "them".',
   '- Cite every listing you rely on by its exact name, and give the capture date (captured_at) of the snapshot you used, e.g. "Desert Safari (captured 2026-10-30)".',
   '- When the data needed to answer is missing, empty or null, say so plainly and name what is missing.',
   '- Never guess, estimate or invent prices, dates, ratings, reviews or timing. If you cannot tell from the data, say you cannot tell.',
@@ -79,7 +82,15 @@ export type AskResponse = {
 }
 
 type Tag = { id: string; kind: string; name: string }
-type ListingRow = { id: string; name: string; is_own: boolean; source?: string | null; active?: boolean | null }
+type ListingRow = {
+  id: string
+  name: string
+  is_own: boolean
+  source?: string | null
+  active?: boolean | null
+  company_id?: string | null
+}
+type CompanyRow = { id: string; name: string; is_own: boolean }
 type SnapshotRow = { id: string; listing_id: string; captured_at: string | null } & Record<string, unknown>
 type OptionRow = {
   snapshot_id: string
@@ -143,6 +154,8 @@ export type ListingContext = {
   listing_id: string
   name: string
   ownership: 'own' | 'competitor'
+  /** The listing's company, and whether it is our own (OWN). null when it has no company. */
+  company: { name: string; own: boolean } | null
   tags: { kind: string; name: string }[]
   latest_snapshot: (Row & { snapshot_id: string; captured_at: string | null; options: Omit<OptionRow, 'snapshot_id'>[] }) | null
   timing_rules: Row[]
@@ -181,12 +194,15 @@ export function buildContext(input: {
   placeIds: string[]
   typeIds: string[]
   listings: ListingRow[]
+  /** Companies of the listings. Optional so older callers still work; missing means no company. */
+  companies?: CompanyRow[]
   snapshots: SnapshotRow[]
   options: OptionRow[]
   timingRules: Row[]
   reviews: Row[]
 }): AskContext {
   const tagById = new Map(input.tags.map((t) => [t.id, t]))
+  const companyById = new Map((input.companies ?? []).map((c) => [c.id, c]))
   const name = (id: string) => tagById.get(id)?.name ?? id
 
   // Snapshots arrive newest first; keep the first one per listing.
@@ -196,6 +212,11 @@ export function buildContext(input: {
   const optionsBySnapshot = new Map<string, Omit<OptionRow, 'snapshot_id'>[]>()
   for (const { snapshot_id, ...o } of [...input.options].sort((a, b) => a.sort_order - b.sort_order)) {
     optionsBySnapshot.set(snapshot_id, [...(optionsBySnapshot.get(snapshot_id) ?? []), o])
+  }
+
+  const companyOf = (l: ListingRow): ListingContext['company'] => {
+    const c = l.company_id ? companyById.get(l.company_id) : undefined
+    return c ? { name: c.name, own: c.is_own === true } : null
   }
 
   const contextFor = (l: ListingRow): ListingContext => {
@@ -209,6 +230,7 @@ export function buildContext(input: {
       listing_id: l.id,
       name: l.name,
       ownership: l.is_own ? 'own' : 'competitor',
+      company: companyOf(l),
       tags: input.links
         .filter((k) => k.listing_id === l.id && tagById.has(k.tag_id))
         .map((k) => ({ kind: tagById.get(k.tag_id)!.kind, name: tagById.get(k.tag_id)!.name })),
@@ -317,7 +339,7 @@ export function createHandler(deps: Deps) {
       }
 
       const [listings, snapshots, timingRules, reviews] = await Promise.all([
-        read<ListingRow>('mt_listings', { select: 'id,name,is_own,source,active', id: inList(ids) }),
+        read<ListingRow>('mt_listings', { select: 'id,name,is_own,source,active,company_id', id: inList(ids) }),
         read<SnapshotRow>('mt_snapshots', { select: SNAPSHOT_COLUMNS, listing_id: inList(ids), order: 'captured_at.desc' }),
         read<Row>('mt_timing_rules', { select: '*', listing_id: inList(ids) }),
         read<Row>('mt_reviews', { select: 'listing_id,star_rating,review_text', listing_id: inList(ids) }),
@@ -334,7 +356,13 @@ export function createHandler(deps: Deps) {
         })
         : []
 
-      const context = buildContext({ tags, links, placeIds, typeIds, listings, snapshots, options, timingRules, reviews })
+      // Only the companies of the chosen listings, and only their name and OWN marker.
+      const companyIds = [...new Set(listings.map((l) => l.company_id).filter((c): c is string => !!c))]
+      const companies = companyIds.length
+        ? await read<CompanyRow>('mt_companies', { select: 'id,name,is_own', id: inList(companyIds) })
+        : []
+
+      const context = buildContext({ tags, links, placeIds, typeIds, listings, companies, snapshots, options, timingRules, reviews })
 
       const key = deps.env('AQUILA_GEMINI_KEY')
       if (!key) throw new HttpError(500, 'The AQUILA_GEMINI_KEY secret is not set.')

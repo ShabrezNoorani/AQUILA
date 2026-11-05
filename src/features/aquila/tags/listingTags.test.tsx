@@ -18,7 +18,15 @@ let listings: Record<string, unknown>[]
 let linkInsertError: { message: string } | null
 
 function respond(q: Query): Result {
+  if (q.table === 'mt_tags' && has(q, 'insert')) {
+    const row = callsOf(q, 'insert')[0][0] as Omit<Tag, 'id'>
+    return { data: { id: 'NEW', ...row }, error: null }
+  }
   if (q.table === 'mt_tags') return { data: tags, error: null }
+  if (q.table === 'mt_companies' && has(q, 'insert')) {
+    return { data: { id: 'C-new', ...(callsOf(q, 'insert')[0][0] as object) }, error: null }
+  }
+  if (q.table === 'mt_companies') return { data: [], error: null }
   if (q.table === 'mt_listing_tags' && has(q, 'insert')) return { data: null, error: linkInsertError }
   if (q.table === 'mt_listing_tags' && has(q, 'delete')) return { data: null, error: null }
   if (q.table === 'mt_listing_tags') {
@@ -54,12 +62,13 @@ describe('NewListingForm tag rule', () => {
     render(<NewListingForm onCreated={() => {}} />)
     await screen.findByLabelText('Safari')
     fireEvent.change(screen.getByLabelText(/^name/i), { target: { value: 'Red Dunes' } })
+    fireEvent.change(screen.getByLabelText(/^company/i), { target: { value: 'Rival Co' } })
   }
   const submit = () => fireEvent.click(screen.getByRole('button', { name: /create listing/i }))
 
-  it('shows tags from mt_tags as type radios and place checkboxes', async () => {
+  it('shows tags from mt_tags as type and place checkboxes', async () => {
     render(<NewListingForm onCreated={() => {}} />)
-    expect((await screen.findByLabelText('Safari')).getAttribute('type')).toBe('radio')
+    expect((await screen.findByLabelText('Safari')).getAttribute('type')).toBe('checkbox')
     expect(screen.getByLabelText('Dubai').getAttribute('type')).toBe('checkbox')
   })
 
@@ -82,14 +91,15 @@ describe('NewListingForm tag rule', () => {
     await fillName()
     fireEvent.click(screen.getByLabelText('Dubai'))
     submit()
-    expect((await screen.findByRole('alert')).textContent).toMatch(/choose one type tag/i)
+    expect((await screen.findByRole('alert')).textContent).toMatch(/choose at least one type tag/i)
     expect(writes()).toHaveLength(0)
   })
 
-  it('allows only one type: picking a second type replaces the first', async () => {
+  it('allows two type tags: both are saved', async () => {
     const onCreated = vi.fn()
     render(<NewListingForm onCreated={onCreated} />)
     fireEvent.change(await screen.findByLabelText(/^name/i), { target: { value: 'Red Dunes' } })
+    fireEvent.change(screen.getByLabelText(/^company/i), { target: { value: 'Rival Co' } })
     await screen.findByLabelText('Safari')
     fireEvent.click(screen.getByLabelText('Safari'))
     fireEvent.click(screen.getByLabelText('Cruise'))
@@ -99,10 +109,51 @@ describe('NewListingForm tag rule', () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-1'))
     const link = queries.find((q) => q.table === 'mt_listing_tags' && has(q, 'insert'))!
     expect(callsOf(link, 'insert')[0][0]).toEqual([
+      { listing_id: 'new-1', tag_id: 'T1' },
       { listing_id: 'new-1', tag_id: 'T2' },
       { listing_id: 'new-1', tag_id: 'P1' },
       { listing_id: 'new-1', tag_id: 'P2' },
     ])
+  })
+
+  it('adds a new tag inline: type a name, choose the kind, Add; it is created and ticked', async () => {
+    await fillName()
+    fireEvent.change(screen.getByLabelText('New tag'), { target: { value: '  Food   Tour ' } })
+    fireEvent.change(screen.getByLabelText('Kind'), { target: { value: 'type' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    const added = await screen.findByLabelText('Food Tour') as HTMLInputElement
+    expect(added.checked).toBe(true)
+    const ins = queries.find((q) => q.table === 'mt_tags' && has(q, 'insert'))!
+    expect(callsOf(ins, 'insert')[0][0]).toEqual({ name: 'Food Tour', kind: 'type' })
+    expect((screen.getByLabelText('New tag') as HTMLInputElement).value).toBe('')
+  })
+
+  it('adding a name that already exists for that kind reuses the tag and writes nothing', async () => {
+    await fillName()
+    fireEvent.change(screen.getByLabelText('New tag'), { target: { value: ' safari ' } })
+    fireEvent.change(screen.getByLabelText('Kind'), { target: { value: 'type' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect((screen.getByLabelText('Safari') as HTMLInputElement).checked).toBe(true))
+    expect(writes()).toHaveLength(0)
+    expect(screen.getAllByLabelText('Safari')).toHaveLength(1)
+  })
+
+  it('the same name with the other kind is a different tag', async () => {
+    await fillName()
+    fireEvent.change(screen.getByLabelText('New tag'), { target: { value: 'Safari' } })
+    fireEvent.change(screen.getByLabelText('Kind'), { target: { value: 'place' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(screen.getAllByLabelText('Safari')).toHaveLength(2))
+    const ins = queries.find((q) => q.table === 'mt_tags' && has(q, 'insert'))!
+    expect(callsOf(ins, 'insert')[0][0]).toEqual({ name: 'Safari', kind: 'place' })
+  })
+
+  it('an empty inline tag name shows an error and writes nothing', async () => {
+    await fillName()
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect((await within(screen.getByRole('group', { name: 'Add a tag' })).findByRole('alert')).textContent)
+      .toMatch(/tag name is required/i)
+    expect(writes()).toHaveLength(0)
   })
 
   it('does not check tags while the name is also invalid, but shows both errors', async () => {
@@ -157,7 +208,7 @@ describe('ListingDetailPage tags', () => {
     expect(within(tagsBox).queryByText('Cruise')).toBeNull()
   })
 
-  it('saves a valid change, writing only the differences', async () => {
+  it('saves a second type tag alongside the first, writing only the differences', async () => {
     render(<ListingDetailPage id="L1" />)
     fireEvent.click(await screen.findByRole('button', { name: /edit tags/i }))
     fireEvent.click(screen.getByLabelText('Cruise'))
@@ -170,9 +221,21 @@ describe('ListingDetailPage tags', () => {
       { listing_id: 'L1', tag_id: 'T2' },
       { listing_id: 'L1', tag_id: 'P2' },
     ])
+    expect(queries.filter((q) => q.table === 'mt_listing_tags' && has(q, 'delete'))).toHaveLength(0)
+    expect(within(await section()).getByText('Cruise')).toBeTruthy()
+    expect(within(await section()).getByText('Safari')).toBeTruthy()
+  })
+
+  it('removing a type tag deletes only that link', async () => {
+    links = [{ listing_id: 'L1', tag_id: 'T1' }, { listing_id: 'L1', tag_id: 'T2' }, { listing_id: 'L1', tag_id: 'P1' }]
+    render(<ListingDetailPage id="L1" />)
+    fireEvent.click(await screen.findByRole('button', { name: /edit tags/i }))
+    fireEvent.click(screen.getByLabelText('Safari'))
+    fireEvent.click(screen.getByRole('button', { name: /save tags/i }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: /save tags/i })).toBeNull())
     const dels = queries.filter((q) => q.table === 'mt_listing_tags' && has(q, 'delete'))
     expect(dels.map((q) => callsOf(q, 'eq'))).toEqual([[['listing_id', 'L1'], ['tag_id', 'T1']]])
-    expect(within(await section()).getByText('Cruise')).toBeTruthy()
+    expect(queries.filter((q) => q.table === 'mt_listing_tags' && has(q, 'insert'))).toHaveLength(0)
   })
 
   it('refuses to remove the last place tag and writes nothing', async () => {
@@ -190,7 +253,7 @@ describe('ListingDetailPage tags', () => {
     render(<ListingDetailPage id="L1" />)
     fireEvent.click(await screen.findByRole('button', { name: /edit tags/i }))
     fireEvent.click(screen.getByRole('button', { name: /save tags/i }))
-    expect(await screen.findByText(/choose one type tag/i)).toBeTruthy()
+    expect(await screen.findByText(/choose at least one type tag/i)).toBeTruthy()
     expect(writes()).toHaveLength(0)
   })
 

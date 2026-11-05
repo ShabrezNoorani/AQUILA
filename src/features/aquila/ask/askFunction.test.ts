@@ -84,8 +84,12 @@ beforeEach(() => {
       { listing_id: 'L4', tag_id: 'P2' }, { listing_id: 'L4', tag_id: 'T1' },
     ],
     mt_listings: [
-      { id: 'L1', name: 'Our Safari', is_own: true, source: 'viator', active: true },
-      { id: 'L2', name: 'Rival Safari', is_own: false, source: 'viator', active: true },
+      { id: 'L1', name: 'Our Safari', is_own: true, source: 'viator', active: true, company_id: 'C1' },
+      { id: 'L2', name: 'Rival Safari', is_own: false, source: 'viator', active: true, company_id: 'C2' },
+    ],
+    mt_companies: [
+      { id: 'C1', name: 'Scenic Zest Tours', is_own: true },
+      { id: 'C2', name: 'Rival Co', is_own: false },
     ],
     mt_snapshots: [
       { id: 'S2new', listing_id: 'L2', captured_at: '2026-10-30T10:00:00Z', title: 'Rival', rating: 4.6 },
@@ -231,6 +235,32 @@ describe('a full answer', () => {
     expect(ours.reviews).toEqual([])
   })
 
+  it("sends each listing's company name and OWN marker, and nothing else about the company", async () => {
+    await handler()(post({ question: 'How do we compare?', tag_ids: ['P1', 'T1'] }))
+    const read = calls.find((c) => c.url.pathname === '/rest/v1/mt_companies')!
+    expect(read.url.searchParams.get('select')).toBe('id,name,is_own')
+    expect(read.url.searchParams.get('id')).toBe('in.(C1,C2)')
+    const byName = Object.fromEntries(
+      sentContext().groups[0].listings.map((l: { name: string; company: unknown }) => [l.name, l.company]),
+    )
+    expect(byName).toEqual({
+      'Our Safari': { name: 'Scenic Zest Tours', own: true },
+      'Rival Safari': { name: 'Rival Co', own: false },
+    })
+  })
+
+  it('labels the OWN company in the prompt so answers compare us with competitors', () => {
+    expect(SYSTEM_PROMPT).toMatch(/"own": true when it is the owner's own company \(OWN\)/)
+    expect(SYSTEM_PROMPT).toMatch(/label the owner's listings as OWN and name each competitor company/i)
+  })
+
+  it('does not read mt_companies when no chosen listing has a company', async () => {
+    tables.mt_listings = (tables.mt_listings as Record<string, unknown>[]).map(({ company_id: _c, ...l }) => l)
+    await handler()(post({ question: 'Prices?', tag_ids: ['P1', 'T1'] }))
+    expect(restTables()).not.toContain('mt_companies')
+    for (const l of sentContext().groups[0].listings) expect(l.company).toBeNull()
+  })
+
   it('returns the answer with the listing and snapshot ids it used, ignoring ids it was not given', async () => {
     const res = await handler()(post({ question: 'Prices?', tag_ids: ['P1', 'T1'] }))
     const body = await res.json()
@@ -324,5 +354,47 @@ describe('buildContext', () => {
     })
     expect(ctx.groups.map((g) => [g.place_tag, g.listings.map((l) => l.name)])).toEqual([['Dubai', ['Both']], ['Abu Dhabi', ['Both']]])
     expect(ctx.groups[0].listings[0].latest_snapshot).toBeNull()
+  })
+
+  it('groups listings by company: each carries its own company, OWN or competitor, or null when unassigned', () => {
+    const ctx = buildContext({
+      tags,
+      links: ['A', 'B', 'C', 'D'].map((id) => ({ listing_id: id, tag_id: 'P1' })),
+      placeIds: ['P1'],
+      typeIds: [],
+      listings: [
+        { id: 'A', name: 'Ours one', is_own: true, company_id: 'OWN1' },
+        { id: 'B', name: 'Ours two', is_own: true, company_id: 'OWN1' },
+        { id: 'C', name: 'Theirs', is_own: false, company_id: 'R1' },
+        { id: 'D', name: 'Nobody', is_own: false, company_id: null },
+      ],
+      companies: [
+        { id: 'OWN1', name: 'Scenic Zest Tours', is_own: true },
+        { id: 'R1', name: 'Rival Co', is_own: false },
+      ],
+      snapshots: [],
+      options: [],
+      timingRules: [],
+      reviews: [],
+    })
+    const byCompany = new Map<string, string[]>()
+    for (const l of ctx.groups[0].listings) {
+      const key = l.company ? `${l.company.name}${l.company.own ? ' (OWN)' : ''}` : 'Unassigned'
+      byCompany.set(key, [...(byCompany.get(key) ?? []), l.name])
+    }
+    expect(Object.fromEntries(byCompany)).toEqual({
+      'Scenic Zest Tours (OWN)': ['Ours one', 'Ours two'],
+      'Rival Co': ['Theirs'],
+      Unassigned: ['Nobody'],
+    })
+  })
+
+  it('treats a company id with no matching company as no company', () => {
+    const ctx = buildContext({
+      tags, links: [{ listing_id: 'A', tag_id: 'P1' }], placeIds: ['P1'], typeIds: [],
+      listings: [{ id: 'A', name: 'Ghost', is_own: false, company_id: 'gone' }],
+      snapshots: [], options: [], timingRules: [], reviews: [],
+    })
+    expect(ctx.groups[0].listings[0].company).toBeNull()
   })
 })

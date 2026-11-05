@@ -8,6 +8,7 @@ import {
   tagFormToRow,
   tagsByListing,
   tagsOfKind,
+  withTag,
 } from './tagMapping'
 
 const tags: Tag[] = [
@@ -47,7 +48,7 @@ describe('tag names', () => {
   })
 })
 
-describe('listingTagsError: exactly one type tag and at least one place tag', () => {
+describe('listingTagsError: at least one type tag and at least one place tag', () => {
   it('accepts one type and one or more places', () => {
     expect(listingTagsError(['T1', 'P1'], tags)).toBeNull()
     expect(listingTagsError(['T1', 'P1', 'P2'], tags)).toBeNull()
@@ -60,11 +61,12 @@ describe('listingTagsError: exactly one type tag and at least one place tag', ()
   })
 
   it('rejects a missing type', () => {
-    expect(listingTagsError(['P1'], tags)).toMatch(/choose one type tag/i)
+    expect(listingTagsError(['P1'], tags)).toMatch(/choose at least one type tag/i)
   })
 
-  it('rejects two types', () => {
-    expect(listingTagsError(['T1', 'T2', 'P1'], tags)).toMatch(/only one type tag \(2 chosen\)/i)
+  it('accepts two type tags (several of the same kind are allowed)', () => {
+    expect(listingTagsError(['T1', 'T2', 'P1'], tags)).toBeNull()
+    expect(listingTagsError(['T1', 'T2', 'P1', 'P2'], tags)).toBeNull()
   })
 
   it('rejects a missing place', () => {
@@ -74,6 +76,14 @@ describe('listingTagsError: exactly one type tag and at least one place tag', ()
   it('ignores unknown ids and counts duplicates once', () => {
     expect(listingTagsError(['T1', 'T1', 'P1', 'ghost'], tags)).toBeNull()
     expect(listingTagsError(['ghost', 'P1'], tags)).toMatch(/one type tag/i)
+  })
+})
+
+describe('withTag', () => {
+  it('adds a new tag once, and leaves the list alone when the id is already there', () => {
+    const extra = { id: 'T9', name: 'Food', kind: 'type' as const }
+    expect(withTag(tags, extra).map((t) => t.id)).toEqual([...tags.map((t) => t.id), 'T9'])
+    expect(withTag(tags, tags[0])).toBe(tags)
   })
 })
 

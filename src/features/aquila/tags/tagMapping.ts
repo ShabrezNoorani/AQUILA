@@ -33,8 +33,8 @@ export function tagFormToRow(name: string, kind: string):
 }
 
 /**
- * A listing needs exactly one type tag and at least one place tag.
- * Returns an error message, or null when the selection is valid.
+ * A listing needs at least one type tag and at least one place tag. Several of either kind
+ * are allowed. Returns an error message, or null when the selection is valid.
  * Ids that are not in `tags` are ignored.
  */
 export function listingTagsError(selectedIds: string[], tags: Tag[]): string | null {
@@ -43,13 +43,15 @@ export function listingTagsError(selectedIds: string[], tags: Tag[]): string | n
   const types = chosen.filter((t) => t.kind === 'type').length
   const places = chosen.filter((t) => t.kind === 'place').length
   const problems: string[] = []
-  if (types === 0) problems.push('choose one type tag')
-  if (types > 1) problems.push(`choose only one type tag (${types} chosen)`)
+  if (types === 0) problems.push('choose at least one type tag')
   if (places === 0) problems.push('choose at least one place tag')
   if (!problems.length) return null
   const text = problems.join(' and ')
   return text[0].toUpperCase() + text.slice(1)
 }
+
+/** Adds a tag to a list unless a tag with that id is already there. */
+export const withTag = (tags: Tag[], tag: Tag): Tag[] => (tags.some((t) => t.id === tag.id) ? tags : [...tags, tag])
 
 /** Tags of one kind, sorted by name. */
 export function tagsOfKind(tags: Tag[], kind: TagKind): Tag[] {

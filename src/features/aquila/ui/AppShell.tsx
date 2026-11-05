@@ -5,7 +5,7 @@ import type { ReactNode } from 'react'
 import { hrefFor } from '../router'
 import { Footer } from './Footer'
 
-export type ShellSection = 'listings' | 'tags' | 'ask' | 'help'
+export type ShellSection = 'listings' | 'companies' | 'tags' | 'ask' | 'help'
 
 type NavItem = { key: ShellSection; label: string; href: string; icon: ReactNode }
 
@@ -18,6 +18,7 @@ const icon = (d: string) => (
 
 const NAV: NavItem[] = [
   { key: 'listings', label: 'Listings', href: hrefFor.listings(), icon: icon('M4 5h12M4 10h12M4 15h12') },
+  { key: 'companies', label: 'Competitors', href: hrefFor.companies(), icon: icon('M3 17V7l5-3 5 3v10M13 17V10h4v7M2 17h16M6 9h.01M6 12h.01M10 9h.01M10 12h.01') },
   { key: 'tags', label: 'Tags', href: hrefFor.tags(), icon: icon('M3.5 10.5V4.5a1 1 0 0 1 1-1h6l6 6-7 7-6-6Z M7.5 7.5h.01') },
   { key: 'ask', label: 'Ask AI', href: hrefFor.ask(), icon: icon('M10 3v2M10 15v2M3 10h2M15 10h2M5.5 5.5l1.4 1.4M13.1 13.1l1.4 1.4M5.5 14.5l1.4-1.4M13.1 6.9l1.4-1.4') },
   { key: 'help', label: 'Help', href: hrefFor.help(), icon: icon('M10 17.5a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15Z M7.9 7.6a2.2 2.2 0 0 1 4.2.9c0 1.5-2.1 1.9-2.1 3.1 M10 14.2h.01') },

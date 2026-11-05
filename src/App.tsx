@@ -6,6 +6,7 @@ import NewListingForm from './features/aquila/NewListingForm'
 import TagsPage from './features/aquila/tags/TagsPage'
 import AskPage from './features/aquila/ask/AskPage'
 import HelpPage from './features/aquila/help/HelpPage'
+import CompaniesPage from './features/aquila/companies/CompaniesPage'
 import { hrefFor, navigate, useHashRoute } from './features/aquila/router'
 import { AppShell } from './features/aquila/ui'
 
@@ -25,6 +26,10 @@ function Routes() {
       return <AskPage />
     case 'help':
       return <HelpPage />
+    case 'companies':
+      return <CompaniesPage />
+    case 'company':
+      return <CompaniesPage key={route.id} companyId={route.id} />
     default:
       return <ListingsPage />
   }
@@ -34,7 +39,12 @@ function Routes() {
 function Layout() {
   const route = useHashRoute()
   return (
-    <AppShell active={route.name === 'tags' ? 'tags' : route.name === 'ask' ? 'ask' : 'listings'}>
+    <AppShell active={
+      route.name === 'tags' ? 'tags'
+        : route.name === 'ask' ? 'ask'
+          : route.name === 'companies' || route.name === 'company' ? 'companies'
+            : 'listings'
+    }>
       <main>
         <Routes />
       </main>
