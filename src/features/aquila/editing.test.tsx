@@ -241,7 +241,32 @@ describe('Edit listing', () => {
     await waitFor(() => expect(writes('update')).toHaveLength(1))
     expect(callsOf(writes('update')[0], 'update')[0][0]).toMatchObject({ company_id: 'C2' })
     expect(writes('insert')).toHaveLength(0)
-    expect(await screen.findByRole('link', { name: 'Scenic Zest Tours (OWN)' })).toBeTruthy()
+    expect(await screen.findByRole('link', { name: 'Scenic Zest Tours' })).toBeTruthy()
+  })
+
+  it('shows OWN next to the title only when the company is marked OWN, and never "Competitor"', async () => {
+    listing.company_id = 'C2'
+    const { unmount } = render(<ListingDetailPage id="L1" />)
+    expect(await screen.findByRole('link', { name: 'Scenic Zest Tours' })).toBeTruthy()
+    expect(screen.getByText('OWN')).toBeTruthy()
+    expect(screen.queryByText('Competitor')).toBeNull()
+    unmount()
+
+    listing.company_id = 'C1'
+    render(<ListingDetailPage id="L1" />)
+    expect(await screen.findByRole('link', { name: 'Rival Co' })).toBeTruthy()
+    expect(screen.queryByText('OWN')).toBeNull()
+    expect(screen.queryByText('Competitor')).toBeNull()
+  })
+
+  it('shows neither OWN nor "Competitor" when the listing has no company', async () => {
+    listing.is_own = true
+    render(<ListingDetailPage id="L1" />)
+    expect(await screen.findByRole('heading', { name: 'Rival Safari' })).toBeTruthy()
+    await waitFor(() => expect(queries.some((q) => q.table === 'mt_companies')).toBe(true))
+    expect(screen.queryByText('OWN')).toBeNull()
+    expect(screen.queryByText('Own')).toBeNull()
+    expect(screen.queryByText('Competitor')).toBeNull()
   })
 
   it('creates a company that does not exist yet, as a competitor like the listing', async () => {

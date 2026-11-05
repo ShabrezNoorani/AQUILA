@@ -12,6 +12,7 @@ import {
 } from '../mapping'
 import type { Company, Listing, ListingTag, Tag } from '../types'
 import CompaniesPage from './CompaniesPage'
+import { createListingWithTags } from '../api'
 
 vi.mock('../../../lib/supabase', () => ({ supabase: { from: vi.fn() } }))
 
@@ -399,5 +400,54 @@ describe('CompaniesPage views, sorting and tag filter', () => {
     expect(await screen.findByText(/no listings here have all the selected tags/i)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
     expect(within(screen.getByRole('table')).getAllByRole('link').map((a) => a.textContent)).toEqual(['Loose One', 'Old Row'])
+  })
+})
+
+// ---------- a listing saved with a company ----------
+
+describe('a listing with a company', () => {
+  it('appears under that company, not under Unassigned', async () => {
+    // A tiny mt_listings table: what createListingWithTags inserts is what the page reads back.
+    const stored: Record<string, unknown>[] = []
+    companies = [{ id: 'CW', name: 'City Wonders Ltd', is_own: false }]
+    links = []
+    const fake = createFakeSupabase((q) => {
+      if (q.table === 'mt_listings' && has(q, 'insert')) {
+        const row = { id: 'NEW1', ...(callsOf(q, 'insert')[0][0] as object) }
+        stored.push(row)
+        return { data: row, error: null }
+      }
+      if (q.table === 'mt_listings') return { data: stored, error: null }
+      return respond(q)
+    })
+    vi.mocked(supabase.from).mockImplementation(fake.client.from as never)
+
+    await createListingWithTags({
+      name: 'Notre-Dame Tour with Access to the Cathedral', is_own: false, source: 'viator',
+      url: null, competitor_name: null, active: true, company_id: 'CW',
+    }, [])
+
+    const { unmount } = render(<CompaniesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'List' }))
+    const table = screen.getByRole('table', { name: 'Companies' })
+    const row = within(table).getByRole('link', { name: 'City Wonders Ltd' }).closest('tr')!
+    expect(within(row).getByText('1')).toBeTruthy()
+    expect(within(table).queryByRole('link', { name: 'Unassigned' })).toBeNull()
+    unmount()
+
+    render(<CompaniesPage companyId="CW" />)
+    const listingsTable = await screen.findByRole('table', { name: 'Listings for City Wonders Ltd' })
+    expect(within(listingsTable).getByRole('link', { name: 'Notre-Dame Tour with Access to the Cathedral' })).toBeTruthy()
+  })
+
+  it('a listing with only the old "Competitor name" text, and no company_id, is Unassigned', async () => {
+    companies = [{ id: 'CW', name: 'City Wonders Ltd', is_own: false }]
+    listings = [{ id: 'X', name: 'Old Notre-Dame Tour', competitor_name: 'City Wonders Ltd', company_id: null, active: true }]
+    links = []
+    render(<CompaniesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'List' }))
+    const table = screen.getByRole('table', { name: 'Companies' })
+    expect(within(within(table).getByRole('link', { name: 'Unassigned' }).closest('tr')!).getByText('1')).toBeTruthy()
+    expect(within(within(table).getByRole('link', { name: 'City Wonders Ltd' }).closest('tr')!).getByText('0')).toBeTruthy()
   })
 })

@@ -281,10 +281,11 @@ export default function ListingDetailPage({ id }: { id: string }) {
     <Page title={listing.name} back={{ href: hrefFor.listings(), label: '← All listings' }}
       meta={(
         <>
-          <Badge tone={listing.is_own ? 'strong' : 'neutral'}>{listing.is_own ? 'Own' : 'Competitor'}</Badge>
+          {/* OWN only when the listing's company is marked OWN; nothing for other companies. */}
+          {company?.is_own && <Badge tone="strong">OWN</Badge>}
           {company && (
             <a href={hrefFor.company(company.id)} className="font-medium text-ink-2 hover:text-accent">
-              {company.name}{company.is_own ? ' (OWN)' : ''}
+              {company.name}
             </a>
           )}
           <Badge tone={listing.active ? 'positive' : 'neutral'}>{listing.active ? 'Active' : 'Inactive'}</Badge>
